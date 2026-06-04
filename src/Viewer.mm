@@ -13,6 +13,11 @@
 #include <Cocoa_LocalPool.hxx>
 #include <Graphic3d_NameOfMaterial.hxx>
 
+#include <STEPControl_Reader.hxx>
+#include <TopExp_Explorer.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+
 #include <iostream>
 
 // ============================================================================
@@ -129,6 +134,7 @@ static Handle(AIS_Shape)                sAISShape;
 // ============================================================================
 @interface ViewerControlPanel : NSView
 {
+    NSButton* mOpenBtn;
     NSButton* mWireBtn;
     NSButton* mShadeBtn;
     NSButton* mTransBtn;
@@ -146,7 +152,6 @@ static Handle(AIS_Shape)                sAISShape;
         self.wantsLayer = YES;
         self.layer.backgroundColor = [[NSColor colorWithWhite:0.15 alpha:1.0] CGColor];
 
-        // 创建按钮样式
         auto makeBtn = ^NSButton*(NSString* title, NSRect r, SEL action) {
             NSButton* b = [[NSButton alloc] initWithFrame:r];
             b.title = title;
@@ -158,6 +163,8 @@ static Handle(AIS_Shape)                sAISShape;
         };
 
         CGFloat x = 12, y = 4, w = 72, h = 28, gap = 8;
+        mOpenBtn  = makeBtn(@"打开",  NSMakeRect(x, y, w, h), @selector(onOpen:));
+        x += w + gap;
         mWireBtn  = makeBtn(@"线框",  NSMakeRect(x, y, w, h), @selector(onWireframe:));
         x += w + gap;
         mShadeBtn = makeBtn(@"着色",  NSMakeRect(x, y, w, h), @selector(onShaded:));
@@ -166,12 +173,75 @@ static Handle(AIS_Shape)                sAISShape;
         x += w + gap;
         mFitBtn   = makeBtn(@"适配",  NSMakeRect(x, y, w, h), @selector(onFitAll:));
 
+        [self addSubview:mOpenBtn];
         [self addSubview:mWireBtn];
         [self addSubview:mShadeBtn];
         [self addSubview:mTransBtn];
         [self addSubview:mFitBtn];
     }
     return self;
+}
+
+- (void)onOpen:(id)sender
+{
+    NSOpenPanel* panel = [NSOpenPanel openPanel];
+    [panel setTitle:@"选择 STEP 文件"];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [panel setAllowedFileTypes:@[@"step", @"stp"]];
+#pragma clang diagnostic pop
+    [panel setCanChooseFiles:YES];
+    [panel setCanChooseDirectories:NO];
+    [panel setAllowsMultipleSelection:NO];
+
+    if ([panel runModal] != NSModalResponseOK) return;
+
+    NSURL* fileURL = [panel URL];
+    if (!fileURL) return;
+
+    std::string filePath = [[fileURL path] UTF8String];
+
+    // 读取 STEP 文件
+    STEPControl_Reader reader;
+    IFSelect_ReturnStatus status = reader.ReadFile(filePath.c_str());
+    if (status != IFSelect_RetDone)
+    {
+        NSAlert* alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"无法读取文件"];
+        [alert setInformativeText:[NSString stringWithFormat:@"STEP 文件读取失败: %s", filePath.c_str()]];
+        [alert runModal];
+        return;
+    }
+
+    reader.TransferRoots();
+    TopoDS_Shape shape = reader.OneShape();
+
+    if (shape.IsNull())
+    {
+        NSAlert* alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"文件为空"];
+        [alert setInformativeText:@"STEP 文件中没有有效的几何数据。"];
+        [alert runModal];
+        return;
+    }
+
+    // 在 OCC 视图中追加显示
+    auto ctx = [OCCInteractiveView occContext];
+    auto view = [OCCInteractiveView occView];
+    if (ctx.IsNull() || view.IsNull()) return;
+
+    Handle(AIS_Shape) aisShape = new AIS_Shape(shape);
+    aisShape->SetMaterial(Graphic3d_NOM_ALUMINIUM);
+    aisShape->SetTransparency(0.1);
+    aisShape->SetColor(Quantity_NOC_STEELBLUE3);
+    ctx->Display(aisShape, Standard_True);
+    ctx->SetDisplayMode(aisShape, AIS_Shaded, Standard_False);
+    [OCCInteractiveView setAISShape:aisShape];
+
+    view->FitAll();
+    view->Redraw();
+
+    std::cout << "已加载: " << filePath << std::endl;
 }
 
 - (void)onWireframe:(id)sender
