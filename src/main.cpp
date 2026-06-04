@@ -19,6 +19,7 @@
 #include <Eigen/Dense>
 
 #include "GuidedCoonsSurfGenerator.h"
+#include "Viewer.h"
 
 void Export_step_OCC(TopoDS_Shape shape, std::string filePath)
 {
@@ -122,6 +123,9 @@ int main()
     brepName = "/Users/flytiger25/work/occ/data/output/";
 	brepName += "1_guidedCoonsSurf.step";
 	Export_step_OCC(guidedFace, brepName);
+
+	// 可视化显示生成的曲面
+	DisplayShape(guidedFace, "Guided Coons Surface");
 
     return 0;
 }

@@ -27,6 +27,7 @@ add_executable(guided_coons_surf
     src/GuidedCoonsSurfGenerator.cpp
     src/KnotUpdate.cpp
     src/CurveFair.cpp
+    src/Viewer.mm
 )
 
 # 链接OpenCASCADE库
@@ -54,6 +55,8 @@ target_link_libraries(guided_coons_surf
     TKV3d 
     TKService
     TKDESTEP
+    TKOpenGl
+    "-framework Cocoa"
 )
 
 # 输出信息
