@@ -19,9 +19,22 @@
 #include <TopoDS_Compound.hxx>
 
 #include <iostream>
+#include <vector>
+#include <string>
 
 // ============================================================================
-// OCC 交互 NSView：只负责鼠标事件和 OpenGL 渲染
+// 全局模型列表
+// ============================================================================
+struct ModelEntry
+{
+    Handle(AIS_Shape)     aisShape;
+    std::string           name;
+};
+static std::vector<ModelEntry>  sModels;
+static NSMutableArray<NSString*>* sModelNames = nil;
+
+// ============================================================================
+// OCC 交互 NSView（鼠标 + OpenGL 渲染）
 // ============================================================================
 @interface OCCInteractiveView : NSView
 {
@@ -37,14 +50,31 @@
 
 static Handle(V3d_View)                 sOCCView;
 static Handle(AIS_InteractiveContext)   sOCCContext;
-static Handle(AIS_Shape)                sAISShape;
 
-+ (void)setOCCView:(const Handle(V3d_View)&)v                { sOCCView   = v; }
-+ (void)setOCCContext:(const Handle(AIS_InteractiveContext)&)c { sOCCContext = c; }
-+ (void)setAISShape:(const Handle(AIS_Shape)&)s               { sAISShape  = s; }
-+ (Handle(V3d_View))occView               { return sOCCView; }
+typedef Handle(V3d_View)               HView;
+typedef Handle(AIS_InteractiveContext) HCtx;
+
++ (void)setOCCView:(HView)v    { sOCCView   = v; }
++ (void)setOCCContext:(HCtx)c  { sOCCContext = c; }
++ (Handle(V3d_View))occView              { return sOCCView; }
 + (Handle(AIS_InteractiveContext))occContext { return sOCCContext; }
-+ (Handle(AIS_Shape))aisShape             { return sAISShape; }
+
+// ── 选中模型（高亮）──
++ (void)selectModelAtIndex:(NSInteger)idx
+{
+    if (sOCCContext.IsNull()) return;
+    sOCCContext->ClearSelected(Standard_False);
+    if (idx >= 0 && idx < (NSInteger)sModels.size())
+    {
+        Handle(AIS_Shape) sh = sModels[idx].aisShape;
+        if (!sh.IsNull())
+        {
+            sOCCContext->AddOrRemoveSelected(sh, Standard_True);
+        }
+    }
+}
+
++ (NSInteger)modelCount { return (NSInteger)sModels.size(); }
 
 - (instancetype)initWithFrame:(NSRect)frame
 {
@@ -60,9 +90,8 @@ static Handle(AIS_Shape)                sAISShape;
 }
 
 - (BOOL)acceptsFirstResponder { return YES; }
-- (BOOL)isFlipped { return YES; }
+- (BOOL)isFlipped            { return YES; }
 
-// ── 鼠标 ─────────────────────────────────────────────────
 - (void)mouseDown:(NSEvent*)e
 {
     myLastPoint = [self convertPoint:[e locationInWindow] fromView:nil];
@@ -85,26 +114,22 @@ static Handle(AIS_Shape)                sAISShape;
     if (self.isRotating)
         sOCCView->Rotation(Standard_Integer(aPt.x), Standard_Integer(aPt.y));
     if (self.isPanning)
-    {
         sOCCView->Pan(Standard_Integer(aPt.x - myLastPoint.x),
                       Standard_Integer(myLastPoint.y - aPt.y));
-    }
     myLastPoint = aPt;
 }
 - (void)rightMouseDragged:(NSEvent*)e
 {
     NSPoint aPt = [self convertPoint:[e locationInWindow] fromView:nil];
     if (self.isPanning)
-    {
         sOCCView->Pan(Standard_Integer(aPt.x - myLastPoint.x),
                       Standard_Integer(myLastPoint.y - aPt.y));
-    }
     myLastPoint = aPt;
 }
-- (void)otherMouseDragged:(NSEvent*)e { [self rightMouseDragged:e]; }
-- (void)mouseUp:(NSEvent*)e    { self.isRotating = Standard_False; }
-- (void)rightMouseUp:(NSEvent*)e  { self.isPanning = Standard_False; }
-- (void)otherMouseUp:(NSEvent*)e  { self.isPanning = Standard_False; }
+- (void)otherMouseDragged:(NSEvent*)e  { [self rightMouseDragged:e]; }
+- (void)mouseUp:(NSEvent*)e           { self.isRotating = Standard_False; }
+- (void)rightMouseUp:(NSEvent*)e       { self.isPanning  = Standard_False; }
+- (void)otherMouseUp:(NSEvent*)e       { self.isPanning  = Standard_False; }
 
 - (void)scrollWheel:(NSEvent*)e
 {
@@ -130,16 +155,70 @@ static Handle(AIS_Shape)                sAISShape;
 @end
 
 // ============================================================================
-// 控制栏按钮的点击回调
+// 模型列表面板（NSTableView）
+// ============================================================================
+@interface ModelListController : NSObject <NSTableViewDataSource, NSTableViewDelegate>
+{
+    NSTableView* tableView;
+}
+- (instancetype)initWithTableView:(NSTableView*)tv;
+- (void)reload;
+@end
+
+@implementation ModelListController
+
+- (instancetype)initWithTableView:(NSTableView*)tv
+{
+    self = [super init];
+    if (self)
+    {
+        tableView = tv;
+        tv.dataSource = self;
+        tv.delegate   = self;
+        [tv setTarget:self];
+        [tv setAction:@selector(onTableClick:)];
+    }
+    return self;
+}
+
+- (void)reload { [tableView reloadData]; }
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)tv
+{
+    return [OCCInteractiveView modelCount];
+}
+
+- (id)tableView:(NSTableView*)tv
+    objectValueForTableColumn:(NSTableColumn*)col row:(NSInteger)row
+{
+    if (row < 0 || row >= [OCCInteractiveView modelCount]) return @"";
+    return [NSString stringWithUTF8String:sModels[row].name.c_str()];
+}
+
+- (void)onTableClick:(id)sender
+{
+    NSInteger row = [tableView clickedRow];
+    if (row >= 0)
+        [OCCInteractiveView selectModelAtIndex:row];
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification*)note
+{
+    NSInteger row = [tableView selectedRow];
+    if (row >= 0)
+        [OCCInteractiveView selectModelAtIndex:row];
+}
+@end
+
+// ============================================================================
+// 列表管理器（全局引用，供按钮回调刷新列表）
+// ============================================================================
+static ModelListController* gListCtrl = nil;
+
+// ============================================================================
+// 顶部控制栏
 // ============================================================================
 @interface ViewerControlPanel : NSView
-{
-    NSButton* mOpenBtn;
-    NSButton* mWireBtn;
-    NSButton* mShadeBtn;
-    NSButton* mTransBtn;
-    NSButton* mFitBtn;
-}
 @end
 
 @implementation ViewerControlPanel
@@ -152,120 +231,100 @@ static Handle(AIS_Shape)                sAISShape;
         self.wantsLayer = YES;
         self.layer.backgroundColor = [[NSColor colorWithWhite:0.15 alpha:1.0] CGColor];
 
-        auto makeBtn = ^NSButton*(NSString* title, NSRect r, SEL action) {
+        auto mk = ^NSButton*(NSString* t, NSRect r, SEL a) {
             NSButton* b = [[NSButton alloc] initWithFrame:r];
-            b.title = title;
-            b.bezelStyle = NSBezelStyleRounded;
+            b.title = t; b.bezelStyle = NSBezelStyleRounded;
             [b setButtonType:NSButtonTypeMomentaryPushIn];
-            [b setTarget:self];
-            [b setAction:action];
+            [b setTarget:self]; [b setAction:a];
+            [self addSubview:b];
             return b;
         };
 
-        CGFloat x = 12, y = 4, w = 72, h = 28, gap = 8;
-        mOpenBtn  = makeBtn(@"打开",  NSMakeRect(x, y, w, h), @selector(onOpen:));
-        x += w + gap;
-        mWireBtn  = makeBtn(@"线框",  NSMakeRect(x, y, w, h), @selector(onWireframe:));
-        x += w + gap;
-        mShadeBtn = makeBtn(@"着色",  NSMakeRect(x, y, w, h), @selector(onShaded:));
-        x += w + gap;
-        mTransBtn = makeBtn(@"透明度", NSMakeRect(x, y, w, h), @selector(onTransparency:));
-        x += w + gap;
-        mFitBtn   = makeBtn(@"适配",  NSMakeRect(x, y, w, h), @selector(onFitAll:));
-
-        [self addSubview:mOpenBtn];
-        [self addSubview:mWireBtn];
-        [self addSubview:mShadeBtn];
-        [self addSubview:mTransBtn];
-        [self addSubview:mFitBtn];
+        CGFloat x=12, y=4, w=72, h=28, g=8;
+        mk(@"打开",   NSMakeRect(x, y, w, h), @selector(onOpen:));  x+=w+g;
+        mk(@"线框",   NSMakeRect(x, y, w, h), @selector(onWire:));  x+=w+g;
+        mk(@"着色",   NSMakeRect(x, y, w, h), @selector(onShade:)); x+=w+g;
+        mk(@"透明度", NSMakeRect(x, y, w, h), @selector(onTrans:)); x+=w+g;
+        mk(@"适配",   NSMakeRect(x, y, w, h), @selector(onFit:));
     }
     return self;
 }
 
+// ── 打开 STEP ──
 - (void)onOpen:(id)sender
 {
-    NSOpenPanel* panel = [NSOpenPanel openPanel];
-    [panel setTitle:@"选择 STEP 文件"];
+    NSOpenPanel* p = [NSOpenPanel openPanel];
+    p.title = @"选择 STEP 文件";
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    [panel setAllowedFileTypes:@[@"step", @"stp"]];
+    [p setAllowedFileTypes:@[@"step", @"stp"]];
 #pragma clang diagnostic pop
-    [panel setCanChooseFiles:YES];
-    [panel setCanChooseDirectories:NO];
-    [panel setAllowsMultipleSelection:NO];
+    p.canChooseFiles = YES;
+    p.canChooseDirectories = NO;
+    p.allowsMultipleSelection = NO;
+    if ([p runModal] != NSModalResponseOK) return;
 
-    if ([panel runModal] != NSModalResponseOK) return;
-
-    NSURL* fileURL = [panel URL];
-    if (!fileURL) return;
-
-    std::string filePath = [[fileURL path] UTF8String];
-
-    // 读取 STEP 文件
+    std::string filePath = [[[p URL] path] UTF8String];
     STEPControl_Reader reader;
-    IFSelect_ReturnStatus status = reader.ReadFile(filePath.c_str());
-    if (status != IFSelect_RetDone)
-    {
-        NSAlert* alert = [[NSAlert alloc] init];
-        [alert setMessageText:@"无法读取文件"];
-        [alert setInformativeText:[NSString stringWithFormat:@"STEP 文件读取失败: %s", filePath.c_str()]];
-        [alert runModal];
-        return;
-    }
-
+    if (reader.ReadFile(filePath.c_str()) != IFSelect_RetDone) return;
     reader.TransferRoots();
     TopoDS_Shape shape = reader.OneShape();
+    if (shape.IsNull()) return;
 
-    if (shape.IsNull())
-    {
-        NSAlert* alert = [[NSAlert alloc] init];
-        [alert setMessageText:@"文件为空"];
-        [alert setInformativeText:@"STEP 文件中没有有效的几何数据。"];
-        [alert runModal];
-        return;
-    }
-
-    // 在 OCC 视图中追加显示
-    auto ctx = [OCCInteractiveView occContext];
+    auto ctx  = [OCCInteractiveView occContext];
     auto view = [OCCInteractiveView occView];
     if (ctx.IsNull() || view.IsNull()) return;
 
-    Handle(AIS_Shape) aisShape = new AIS_Shape(shape);
-    aisShape->SetMaterial(Graphic3d_NOM_ALUMINIUM);
-    aisShape->SetTransparency(0.1);
-    aisShape->SetColor(Quantity_NOC_STEELBLUE3);
-    ctx->Display(aisShape, Standard_True);
-    ctx->SetDisplayMode(aisShape, AIS_Shaded, Standard_False);
-    [OCCInteractiveView setAISShape:aisShape];
+    Handle(AIS_Shape) ais = new AIS_Shape(shape);
+    ais->SetMaterial(Graphic3d_NOM_ALUMINIUM);
+    ais->SetTransparency(0.1);
+    ais->SetColor(Quantity_NOC_STEELBLUE3);
+    ctx->Display(ais, Standard_True);
+    ctx->SetDisplayMode(ais, AIS_Shaded, Standard_False);
+
+    // 记入模型列表
+    std::string name = [[[p URL] lastPathComponent] UTF8String];
+    sModels.push_back({ais, name});
+
+    // 更新模型列表
+    if (gListCtrl) [gListCtrl reload];
 
     view->FitAll();
     view->Redraw();
-
-    std::cout << "已加载: " << filePath << std::endl;
+    std::cout << "+ " << name << std::endl;
 }
 
-- (void)onWireframe:(id)sender
+- (void)onWire:(id)sender
 {
-    auto ctx   = [OCCInteractiveView occContext];
-    auto shape = [OCCInteractiveView aisShape];
-    ctx->SetDisplayMode(shape, AIS_WireFrame, Standard_True);
-}
-- (void)onShaded:(id)sender
-{
-    auto ctx   = [OCCInteractiveView occContext];
-    auto shape = [OCCInteractiveView aisShape];
-    ctx->SetDisplayMode(shape, AIS_Shaded, Standard_True);
-}
-- (void)onTransparency:(id)sender
-{
-    Handle(AIS_Shape) aShape = [OCCInteractiveView aisShape];
-    if (aShape.IsNull()) return;
-    Standard_Real nt = (aShape->Transparency() > 0.5) ? 0.1 : 0.8;
-    aShape->SetTransparency(nt);
-    [OCCInteractiveView occContext]->Redisplay(aShape, Standard_True);
+    auto ctx = [OCCInteractiveView occContext];
+    for (auto& m : sModels)
+        if (!m.aisShape.IsNull())
+            ctx->SetDisplayMode(m.aisShape, AIS_WireFrame, Standard_False);
+    ctx->UpdateCurrentViewer();
     [OCCInteractiveView occView]->Redraw();
 }
-- (void)onFitAll:(id)sender
+- (void)onShade:(id)sender
+{
+    auto ctx = [OCCInteractiveView occContext];
+    for (auto& m : sModels)
+        if (!m.aisShape.IsNull())
+            ctx->SetDisplayMode(m.aisShape, AIS_Shaded, Standard_False);
+    ctx->UpdateCurrentViewer();
+    [OCCInteractiveView occView]->Redraw();
+}
+- (void)onTrans:(id)sender
+{
+    for (auto& m : sModels)
+    {
+        if (m.aisShape.IsNull()) continue;
+        Standard_Real nt = (m.aisShape->Transparency() > 0.5) ? 0.1 : 0.8;
+        m.aisShape->SetTransparency(nt);
+        [OCCInteractiveView occContext]->Redisplay(m.aisShape, Standard_False);
+    }
+    [OCCInteractiveView occContext]->UpdateCurrentViewer();
+    [OCCInteractiveView occView]->Redraw();
+}
+- (void)onFit:(id)sender
 {
     [OCCInteractiveView occView]->FitAll();
     [OCCInteractiveView occView]->Redraw();
@@ -294,21 +353,41 @@ void DisplayShape(const TopoDS_Shape& theShape, const char* theTitle)
         [NSApp finishLaunching];
     }
 
-    Standard_Integer winW = 900, winH = 636; // 600 + 36 控制栏
-    Standard_Integer ctrlH = 36;
+    Standard_Integer winW = 1100, winH = 636, ctrlH = 36, listW = 180;
 
-    // ── 窗口容器 ──
+    // ── 容器 ──
     NSRect aFrame = NSMakeRect(100, 100, winW, winH);
     NSView* container = [[NSView alloc] initWithFrame:aFrame];
 
-    // ── 控制栏（顶部） ──
+    // ── 控制栏 ──
     NSRect ctrlFrame = NSMakeRect(0, winH - ctrlH, winW, ctrlH);
     ViewerControlPanel* panel = [[ViewerControlPanel alloc] initWithFrame:ctrlFrame];
     panel.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
     [container addSubview:panel];
 
-    // ── OCC GL 视图（下方填满） ──
-    NSRect glFrame = NSMakeRect(0, 0, winW, winH - ctrlH);
+    // ── 左侧模型列表 ──
+    NSRect listFrame = NSMakeRect(0, 0, listW, winH - ctrlH);
+    NSScrollView* scrollView = [[NSScrollView alloc] initWithFrame:listFrame];
+    scrollView.autoresizingMask = NSViewHeightSizable | NSViewMaxXMargin;
+    scrollView.hasVerticalScroller = YES;
+    scrollView.borderType = NSBezelBorder;
+
+    NSTableView* tableView = [[NSTableView alloc] initWithFrame:scrollView.bounds];
+    NSTableColumn* col = [[NSTableColumn alloc] initWithIdentifier:@"name"];
+    col.title = @"模型";
+    col.width = listW - 20;
+    [tableView addTableColumn:col];
+    tableView.headerView = [[NSTableHeaderView alloc] init];
+    tableView.allowsMultipleSelection = NO;
+    scrollView.documentView = tableView;
+
+    ModelListController* listCtrl = [[ModelListController alloc] initWithTableView:tableView];
+    gListCtrl = listCtrl;
+
+    [container addSubview:scrollView];
+
+    // ── OCC GL 视图 ──
+    NSRect glFrame = NSMakeRect(listW, 0, winW - listW, winH - ctrlH);
     OCCInteractiveView* glView = [[OCCInteractiveView alloc] initWithFrame:glFrame];
     glView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [container addSubview:glView];
@@ -327,38 +406,44 @@ void DisplayShape(const TopoDS_Shape& theShape, const char* theTitle)
     [aNSWindow setAcceptsMouseMovedEvents:YES];
 
     // ── OCC 初始化 ──
-    Handle(Aspect_DisplayConnection) aDisplayConn = new Aspect_DisplayConnection();
-    Handle(OpenGl_GraphicDriver)    aDriver      = new OpenGl_GraphicDriver(aDisplayConn);
+    Handle(Aspect_DisplayConnection) dc = new Aspect_DisplayConnection();
+    Handle(OpenGl_GraphicDriver)     dr = new OpenGl_GraphicDriver(dc);
 
-    Handle(V3d_Viewer) aViewer = new V3d_Viewer(aDriver);
-    aViewer->SetDefaultLights();
-    aViewer->SetLightOn();
+    Handle(V3d_Viewer) vr = new V3d_Viewer(dr);
+    vr->SetDefaultLights();
+    vr->SetLightOn();
+    Handle(AIS_InteractiveContext) ctx = new AIS_InteractiveContext(vr);
 
-    Handle(AIS_InteractiveContext) aContext = new AIS_InteractiveContext(aViewer);
+    Handle(Cocoa_Window) cw = new Cocoa_Window((__bridge NSView*)glView);
+    cw->Map();
+    cw->DoMapping();
 
-    Handle(Cocoa_Window) aWindow = new Cocoa_Window((__bridge NSView*)glView);
-    aWindow->Map();
-    aWindow->DoMapping();
+    Handle(V3d_View) view = vr->CreateView();
+    view->SetWindow(cw);
+    [OCCInteractiveView setOCCView:view];
+    [OCCInteractiveView setOCCContext:ctx];
 
-    Handle(V3d_View) aView = aViewer->CreateView();
-    aView->SetWindow(aWindow);
-    [OCCInteractiveView setOCCView:aView];
-    [OCCInteractiveView setOCCContext:aContext];
+    view->SetBackgroundColor(Quantity_NOC_GRAY30);
+    view->SetBgGradientColors(Quantity_NOC_GRAY20, Quantity_NOC_GRAY60,
+                              Aspect_GFM_VER, Standard_False);
 
-    aView->SetBackgroundColor(Quantity_NOC_GRAY30);
-    aView->SetBgGradientColors(Quantity_NOC_GRAY20, Quantity_NOC_GRAY60,
-                               Aspect_GFM_VER, Standard_False);
+    view->FitAll();
+    view->Redraw();
 
-    // ── 显示 shape（默认着色模式） ──
-    Handle(AIS_Shape) anAisShape = new AIS_Shape(theShape);
-    anAisShape->SetMaterial(Graphic3d_NOM_ALUMINIUM);
-    anAisShape->SetTransparency(0.1);
-    anAisShape->SetColor(Quantity_NOC_STEELBLUE3);
-    aContext->Display(anAisShape, Standard_True);
-    aContext->SetDisplayMode(anAisShape, AIS_Shaded, Standard_False);
-    [OCCInteractiveView setAISShape:anAisShape];
-    aView->FitAll();
-    aView->Redraw();
+    // ── 初始 shape ──
+    if (!theShape.IsNull())
+    {
+        Handle(AIS_Shape) ais = new AIS_Shape(theShape);
+        ais->SetMaterial(Graphic3d_NOM_ALUMINIUM);
+        ais->SetTransparency(0.1);
+        ais->SetColor(Quantity_NOC_STEELBLUE3);
+        ctx->Display(ais, Standard_True);
+        ctx->SetDisplayMode(ais, AIS_Shaded, Standard_False);
+        sModels.push_back({ais, theTitle ? theTitle : "model"});
+        [listCtrl reload];
+        view->FitAll();
+        view->Redraw();
+    }
 
     [aNSWindow center];
     [aNSWindow makeKeyAndOrderFront:nil];
