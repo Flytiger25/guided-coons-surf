@@ -1,0 +1,17 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 构建产物
+build/
+cmake-build-*/
+
+# AI 工具本地文件
+.claude/
+
+# IDE 个人配置
+.vscode/settings.json
+
+# 生成的输出文件
+data/coons/
+data/output/

@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C/C++: clang++ 构建和调试活动文件",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/guided_coons_surf",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "MIMode": "lldb",
+            "setupCommands": [
+                {
+                    "description": "禁止 lldb 调用对象方法来格式化显示",
+                    "text": "settings set target.enable-synthetic-value false",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
