@@ -105,6 +105,13 @@ public:
 		m_originalSurf = originalSurf;
 	}
 
+	//! @brief 设置光顺能量方式
+	//! @param [In] isCurveFair true=双向等参线光顺，false=格雷维尔坐标Laplace光顺
+	inline void SetIsCurveFair(Standard_Boolean isCurveFair)
+	{
+		m_isCurveFair = isCurveFair;
+	}
+
 private:
 
 	//------------------------构造Coons曲面-------------------------------
@@ -519,5 +526,6 @@ private:
 	Standard_Real m_tol; // 逼近的容差精度
 	Standard_Integer m_iterateCount; // 迭代次数
 	Standard_Boolean m_isDone; // 迭代完成的标志
+	Standard_Boolean m_isCurveFair = Standard_True; // 光顺能量方式：true=双向等参线光顺，false=格雷维尔坐标Laplace光顺
 };
 

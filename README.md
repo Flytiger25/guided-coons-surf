@@ -37,7 +37,8 @@ $$E = \int \left\| \frac{d^3 C(s)}{ds^3} \right\|^2 ds$$
 ├── include/                    # 头文件
 │   ├── CurveFair.h
 │   ├── GuidedCoonsSurfGenerator.h
-│   └── KnotUpdate.h
+│   ├── KnotUpdate.h
+│   └── LobattoQuadrature.h     # Lobatto 求积数据表（备用模块）
 ├── src/                        # 源文件
 │   ├── main.cpp
 │   ├── CurveFair.cpp

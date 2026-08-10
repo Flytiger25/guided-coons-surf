@@ -1612,9 +1612,6 @@ std::pair<std::vector<Standard_Real>, std::vector<Standard_Real>> CalGrevilleCoo
 }
 
 
-
-
-
 Eigen::MatrixXd GuidedCoonsSurfGenerator::ConstructCurveSmoothingMatrix(
     const Handle(Geom_BSplineCurve)& theBSplineCurve,
     int derivative_order,
@@ -1892,79 +1889,6 @@ Eigen::MatrixXd GuidedCoonsSurfGenerator::ConstructBidirectionalSmoothingMatrix(
     );
 }
 
-//! @brief 在容差意义下比较 x 是否小于 y
-//! @param [In] x 第一个数
-//! @param [In] y 第二个数
-//! @return x 小于 y 则返回true， 否则返回false
-Standard_Boolean IsLess(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
-{
-    return (y - x) > tol;
-}
-
-//! @brief 在容差意义下比较 x 是否大于等于 y
-//! @param [In] x 第一个数
-//! @param [In] y 第二个数
-//! @return x 大于等于 y 则返回true， 否则返回false
-Standard_Boolean IsGreaterOrEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
-{
-    return (x - y) > -tol;
-}
-
-Standard_Real CalBasicFunction(Standard_Real param, Standard_Integer index, Standard_Integer deg, const std::vector<Standard_Real>& knots)
-{
-    Standard_Real nip, uleft, uright, saved, temp;
-    Standard_Integer m = (Standard_Integer)knots.size() - 1;
-    std::vector<Standard_Real> N(deg + 1);
-
-    if ((index == 0 && IsEqual(param, knots[0])) || (index == m - deg - 1 && IsEqual(param, knots[m])))
-    {
-        return 1.0;
-    }
-    if (IsLess(param, knots[index]) || IsGreaterOrEqual(param, knots[index + deg + 1]))
-    {
-        return 0.0;
-    }
-    for (Standard_Integer j = 0; j <= deg; ++j)
-    {
-        if (IsGreaterOrEqual(param, knots[index + j]) && IsLess(param, knots[index + j + 1]))
-        {
-            N[j] = 1.0;
-        }
-        else
-        {
-            N[j] = 0.0;
-        }
-    }
-    for (Standard_Integer k = 1; k <= deg; ++k)
-    {
-        if (N[0] == 0.0)
-        {
-            saved = 0.0;
-        }
-        else
-        {
-            saved = ((param - knots[index]) * N[0]) / (knots[index + k] - knots[index]);
-        }
-        for (Standard_Integer j = 0; j < deg - k + 1; ++j)
-        {
-            uleft = knots[index + j + 1];
-            uright = knots[index + j + k + 1];
-            if (N[j + 1] == 0.0)
-            {
-                N[j] = saved;
-                saved = 0.0;
-            }
-            else
-            {
-                temp = N[j + 1] / (uright - uleft);
-                N[j] = saved + (uright - param) * temp;
-                saved = (param - uleft) * temp;
-            }
-        }
-    }
-    nip = N[0];
-    return nip;
-}
 
 std::vector<Standard_Real> GenerateSamplePoints(
     Standard_Integer theNumSamples, const std::vector<Standard_Real>& theKnots, Standard_Integer theDegree)
@@ -1982,64 +1906,6 @@ std::vector<Standard_Real> GenerateSamplePoints(
     }
 
     return samples;
-}
-
-
-Standard_Real CalBasicFunctionDerivative(
-    Standard_Real theParam, Standard_Integer theIndex,
-    Standard_Integer theDegree, const std::vector<Standard_Real>& theKnots,
-    Standard_Integer theDerivOrder)
-{
-    // B样条基函数导数计算 - 使用递归公式
-    if (theDerivOrder == 0) {
-        return CalBasicFunction(theParam, theIndex, theDegree, theKnots);
-    }
-
-    // 一阶导数公式
-    if (theDegree == 0) {
-        return 0.0; // 0次B样条导数恒为0
-    }
-
-    Standard_Real left = 0.0, right = 0.0;
-    Standard_Real denomLeft = theKnots[theIndex + theDegree] - theKnots[theIndex];
-    Standard_Real denomRight = theKnots[theIndex + theDegree + 1] - theKnots[theIndex + 1];
-
-    if (denomLeft > 1e-10) {
-        left = CalBasicFunctionDerivative(theParam, theIndex, theDegree - 1, theKnots, theDerivOrder - 1);
-        left *= theDegree / denomLeft;
-    }
-
-    if (denomRight > 1e-10) {
-        right = CalBasicFunctionDerivative(theParam, theIndex + 1, theDegree - 1, theKnots, theDerivOrder - 1);
-        right *= theDegree / denomRight;
-    }
-
-    return left - right;
-}
-
-Eigen::VectorXd ComputeBasisFunctions(
-    Standard_Real theParam, Standard_Integer theCtrlPtsNum,
-    Standard_Integer theDegree, const std::vector<Standard_Real>& theKnots,
-    Standard_Integer theDerivOrder)
-{
-    Eigen::VectorXd result = Eigen::VectorXd::Zero(theCtrlPtsNum);
-
-    for (Standard_Integer i = 0; i < theCtrlPtsNum; ++i) {
-        if (theDerivOrder == 0) {
-            // 零阶导数 - 基函数值
-            result(i) = CalBasicFunction(theParam, i, theDegree, theKnots);
-        }
-        else if (theDerivOrder == 1) {
-            // 一阶导数
-            result(i) = CalBasicFunctionDerivative(theParam, i, theDegree, theKnots, 1);
-        }
-        else if (theDerivOrder == 2) {
-            // 二阶导数  
-            result(i) = CalBasicFunctionDerivative(theParam, i, theDegree, theKnots, 2);
-        }
-    }
-
-    return result;
 }
 
 
@@ -2141,9 +2007,7 @@ void GuidedCoonsSurfGenerator::FitOffsetSurface(const std::vector<Eigen::Vector3
     // 构建光顺能量矩阵
     Eigen::MatrixXd H, b;
     Eigen::SparseMatrix<Standard_Real> H_sparse, b_sparse;
-    bool isCurveFair = true;
-
-    if (!isCurveFair)
+    if (m_isCurveFair)
     {
 
         // 构造D矩阵：光顺能量矩阵（用格雷维尔坐标的laplace平滑）
