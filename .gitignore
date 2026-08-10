@@ -15,3 +15,5 @@ cmake-build-*/
 # 生成的输出文件
 data/coons/
 data/output/
+
+SGK1.0.24/
