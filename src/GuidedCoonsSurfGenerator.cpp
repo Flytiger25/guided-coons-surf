@@ -722,83 +722,6 @@ Standard_Boolean GuidedCoonsSurfGenerator::IsCurveInsideSurface(
     return (ratio >= 0.7);
 }
 
-void GuidedCoonsSurfGenerator::TrimGuideCurves(std::vector<Handle(Geom_BSplineCurve)>& guideBSplineCurves, const std::vector<Handle(Geom_BSplineCurve)>& boundaryCurveArray,
-    Standard_Real toleranceDistance) 
-{
-    for (Standard_Integer i = 0; i < guideBSplineCurves.size(); ++i)
-    {
-        // 用于存储最近两条边界曲线的交点和裁剪参数
-        gp_Pnt replacePoints[2];
-        Standard_Real splitParams[2] = { 0 };
-        Standard_Integer foundCount = 0;
-
-        // 计算内部曲线与每条边界曲线的距离并排序
-        std::vector<std::pair<Standard_Real, Handle(Geom_BSplineCurve)>> aBoundaryCurves;
-        for (auto& boundaryCurve : boundaryCurveArray)
-        {
-            Standard_Real distance = ComputeCurveCurveDistance(guideBSplineCurves[i], boundaryCurve);
-            aBoundaryCurves.emplace_back(distance, boundaryCurve);
-        }
-
-        // 按距离从小到大排序
-        std::sort(aBoundaryCurves.begin(), aBoundaryCurves.end(),
-            [](const auto& a, const auto& b) { return a.first < b.first; });
-
-        if (aBoundaryCurves[0].first >= toleranceDistance)
-        {
-            guideBSplineCurves.erase(guideBSplineCurves.begin() + i);
-            i--;
-            continue;
-        }
-
-        // 找到与内部曲线距离最近的两条边界曲线的交点
-        for (size_t j = 0; j < 2 && j < aBoundaryCurves.size(); ++j)
-        {
-            GeomAPI_ExtremaCurveCurve extrema(guideBSplineCurves[i], aBoundaryCurves[j].second);
-
-            if (extrema.NbExtrema() > 0)
-            {
-                gp_Pnt internalPoint, boundaryPoint;
-                Standard_Real paramOnCurve;
-                extrema.NearestPoints(internalPoint, boundaryPoint);
-                extrema.LowerDistanceParameters(splitParams[foundCount], paramOnCurve);
-
-                replacePoints[foundCount] = boundaryPoint;
-                foundCount++;
-            }
-        }
-
-        // 如果没有找到两个有效的交点，则跳过
-        if (foundCount != 2)
-            continue;
-
-        // 确保裁剪参数按升序排列
-        if (splitParams[0] > splitParams[1])
-        {
-            std::swap(splitParams[0], splitParams[1]);
-            std::swap(replacePoints[0], replacePoints[1]);
-        }
-
-        if (splitParams[0] == splitParams[1])
-        {
-            guideBSplineCurves.erase(guideBSplineCurves.begin() + i);
-            i--;
-            continue;
-        }
-
-        // 裁剪内部曲线并更新为新的B样条曲线
-        Handle(Geom_TrimmedCurve) trimmedCurve = new Geom_TrimmedCurve(guideBSplineCurves[i], splitParams[0], splitParams[1]);
-        Handle(Geom_BSplineCurve) modifiedCurve = GeomConvert::CurveToBSplineCurve(trimmedCurve, Convert_TgtThetaOver2);
-
-        // 设置裁剪后的端点
-        modifiedCurve->SetPole(1, replacePoints[0]);
-        modifiedCurve->SetPole(modifiedCurve->NbPoles(), replacePoints[1]);
-
-        // 更新内部曲线
-        guideBSplineCurves[i] = modifiedCurve;
-    }
-}
-
 Standard_Real GuidedCoonsSurfGenerator::ComputeCurveCurveDistance(const Handle(Geom_BSplineCurve)& guideCurve, const Handle(Geom_BSplineCurve)& boundaryCurve)
 {
     GeomAPI_ExtremaCurveCurve aExtrema(guideCurve, boundaryCurve);
@@ -1478,96 +1401,6 @@ void GuidedCoonsSurfGenerator::GetSamplesOffset(std::vector<gp_Pnt2d>& thePntPar
     }
 }
 
-/*
-void GuidedCoonsSurfGenerator::GetSamplesOffset(std::vector<gp_Pnt2d>& thePntParams, std::vector<gp_Pnt>& theOffsets, Standard_Boolean isOriginal, Standard_Integer theSamplesNum)
-{
-    Standard_Integer crvIdx = 0;
-    std::vector<gp_Pnt> allSamples, allProjectionPoints;
-
-    for (const Handle(Geom_BSplineCurve)& guideCurve : m_guideCurves) 
-    {
-        // 得到采样点
-        std::vector<gp_Pnt> tempSamples, samples, anOffsets;
-        // 根据长度自适应采样
-        //samples = SampleGuideCurve(guideCurve, 0, 1, theSamplesNum);
-        for (const auto& trimInterval : m_guideCurvesTrimIntervals[crvIdx])
-        {
-            tempSamples = SampleGuideCurve(guideCurve, trimInterval.first, trimInterval.second, theSamplesNum);
-            for (const auto& sample : tempSamples)
-            {
-                samples.push_back(sample);
-                allSamples.push_back(sample);
-            }
-        }
-        crvIdx++;
-
-        // 得到投影点和参数
-        std::vector<gp_Pnt2d> aPntParams;
-        std::vector<gp_Pnt> projectionPoints;
-        if (isOriginal)
-        {
-            // 初始曲面
-            anOffsets = ProjectPntsToSurf(samples, projectionPoints, m_originalSurf, aPntParams);
-        }
-        else
-        {
-            // 迭代后曲面
-            anOffsets = ProjectPntsToSurf(samples, projectionPoints, m_guidedSurf, aPntParams);
-        }
-
-        for (const auto& projectionPoint : projectionPoints)
-        {
-            allProjectionPoints.push_back(projectionPoint);
-        }
-
-        for (const gp_Pnt2d& aParam : aPntParams) 
-        {
-            // reserve
-            thePntParams.push_back(aParam);
-        }
-
-        for (const gp_Pnt& aPnt : anOffsets)
-        {
-            theOffsets.push_back(aPnt);
-        }
-    }
-
-    
-    // 导出采样点
-    if (isOriginal)
-    {
-        TopoDS_Compound cp;
-        BRep_Builder builder;
-        builder.MakeCompound(cp);
-        for (const auto& sample : allSamples)
-        {
-            builder.Add(cp, BRepBuilderAPI_MakeVertex(sample));
-        }
-        std::string cpName = "data\\Coons\\samples_points.step";
-        STEPControl_Writer stepWriter;
-        stepWriter.Transfer(cp, STEPControl_AsIs);
-        IFSelect_ReturnStatus status = stepWriter.Write(cpName.c_str());
-    }
-
-    // 导出投影点
-    if (isOriginal)
-    {
-        TopoDS_Compound cp;
-        BRep_Builder builder;
-        builder.MakeCompound(cp);
-        for (const auto& sample : allProjectionPoints)
-        {
-            builder.Add(cp, BRepBuilderAPI_MakeVertex(sample));
-        }
-        std::string cpName = "data\\Coons\\projection_points.step";
-        STEPControl_Writer stepWriter;
-        stepWriter.Transfer(cp, STEPControl_AsIs);
-        IFSelect_ReturnStatus status = stepWriter.Write(cpName.c_str());
-    }
-    
-}
-*/
-
 std::vector<gp_Pnt> GuidedCoonsSurfGenerator::SampleGuideCurve(const Handle(Geom_BSplineCurve)& theCurve, Standard_Real startParam, Standard_Real endParam, Standard_Integer theSamplesNum)
 {
     std::vector<gp_Pnt> samples;
@@ -1929,7 +1762,7 @@ Eigen::MatrixXd GuidedCoonsSurfGenerator::ConstructBidirectionalSmoothingMatrixI
     if (0) {
         // 获取u方向的权重
         int u_sample_num = u_params.size();
-        const QuadratureData* u_lobatto_data = getQuadratureData(u_sample_num);
+        const Lobatto::QuadratureData* u_lobatto_data = getQuadratureData(u_sample_num);
         if (u_lobatto_data != nullptr) {
             u_weights = u_lobatto_data->weights_01;
         }
@@ -1940,7 +1773,7 @@ Eigen::MatrixXd GuidedCoonsSurfGenerator::ConstructBidirectionalSmoothingMatrixI
 
         // 获取v方向的权重
         int v_sample_num = v_params.size();
-        const QuadratureData* v_lobatto_data = getQuadratureData(v_sample_num);
+        const Lobatto::QuadratureData* v_lobatto_data = getQuadratureData(v_sample_num);
         if (v_lobatto_data != nullptr) {
             v_weights = v_lobatto_data->weights_01;
         }
@@ -2151,18 +1984,6 @@ std::vector<Standard_Real> GenerateSamplePoints(
     return samples;
 }
 
-Standard_Real GuidedCoonsSurfGeneratorComputeIntegrationWeight(
-    Standard_Real theU, Standard_Real theV,
-    const std::vector<Standard_Real>& theUSamples,
-    const std::vector<Standard_Real>& theVSamples,
-    Standard_Integer theUIndex, Standard_Integer theVIndex)
-{
-    // 简单的梯形积分权重
-    Standard_Real du = (theUIndex == 0 || theUIndex == (Standard_Integer)theUSamples.size() - 1) ? 0.5 : 1.0;
-    Standard_Real dv = (theVIndex == 0 || theVIndex == (Standard_Integer)theVSamples.size() - 1) ? 0.5 : 1.0;
-
-    return du * dv;
-}
 
 Standard_Real CalBasicFunctionDerivative(
     Standard_Real theParam, Standard_Integer theIndex,
@@ -2220,107 +2041,6 @@ Eigen::VectorXd ComputeBasisFunctions(
 
     return result;
 }
-
-Standard_Real ComputeIntegrationWeight(
-    Standard_Real theU, Standard_Real theV,
-    const std::vector<Standard_Real>& theUSamples,
-    const std::vector<Standard_Real>& theVSamples,
-    Standard_Integer theUIndex, Standard_Integer theVIndex)
-{
-    Standard_Integer numU = (Standard_Integer)theUSamples.size();
-    Standard_Integer numV = (Standard_Integer)theVSamples.size();
-
-    // 计算U方向的有效步长
-    Standard_Real uStep = 0.0;
-    if (numU == 1) {
-        uStep = 1.0; // 单点情况
-    }
-    else if (theUIndex == 0) {
-        // 第一个点：使用右半区间
-        uStep = (theUSamples[1] - theUSamples[0]) / 2.0;
-    }
-    else if (theUIndex == numU - 1) {
-        // 最后一个点：使用左半区间  
-        uStep = (theUSamples[numU - 1] - theUSamples[numU - 2]) / 2.0;
-    }
-    else {
-        // 内部点：使用左右邻接区间的平均值
-        uStep = (theUSamples[theUIndex + 1] - theUSamples[theUIndex - 1]) / 2.0;
-    }
-
-    // 计算V方向的有效步长
-    Standard_Real vStep = 0.0;
-    if (numV == 1) {
-        vStep = 1.0;
-    }
-    else if (theVIndex == 0) {
-        vStep = (theVSamples[1] - theVSamples[0]) / 2.0;
-    }
-    else if (theVIndex == numV - 1) {
-        vStep = (theVSamples[numV - 1] - theVSamples[numV - 2]) / 2.0;
-    }
-    else {
-        vStep = (theVSamples[theVIndex + 1] - theVSamples[theVIndex - 1]) / 2.0;
-    }
-
-    // 返回面积微元
-    return uStep * vStep;
-}
-
-Eigen::MatrixXd ConstructThinPlateMatrix(
-    Standard_Integer theCtrlPtsUNum, Standard_Integer theCtrlPtsVNum,
-    const std::vector<Standard_Real>& theUKnots, const std::vector<Standard_Real>& theVKnots,
-    Standard_Integer theDegU, Standard_Integer theDegV)
-{
-    // 在参数域采样用于数值积分
-    Standard_Integer numSamplesU = 200; // 可根据需要调整
-    Standard_Integer numSamplesV = 200;
-
-    std::vector<Standard_Real> uSamples = GenerateSamplePoints(numSamplesU, theUKnots, theDegU);
-    std::vector<Standard_Real> vSamples = GenerateSamplePoints(numSamplesV, theVKnots, theDegV);
-
-    Standard_Integer totalSamples = numSamplesU * numSamplesV;
-    Standard_Integer totalCtrlPts = theCtrlPtsUNum * theCtrlPtsVNum;
-
-    Eigen::MatrixXd D_tp = Eigen::MatrixXd::Zero(totalSamples, totalCtrlPts);
-
-    Standard_Integer sampleIndex = 0;
-
-    // 数值积分计算薄板能量
-    for (Standard_Integer i = 0; i < numSamplesU; ++i) {
-        Standard_Real u = uSamples[i];
-
-        for (Standard_Integer j = 0; j < numSamplesV; ++j) {
-            Standard_Real v = vSamples[j];
-
-            // 计算基函数在各方向的一阶和二阶导数
-            Eigen::VectorXd basisU_0 = ComputeBasisFunctions(u, theCtrlPtsUNum, theDegU, theUKnots, 0);
-            Eigen::VectorXd basisU_1 = ComputeBasisFunctions(u, theCtrlPtsUNum, theDegU, theUKnots, 1);
-            Eigen::VectorXd basisU_2 = ComputeBasisFunctions(u, theCtrlPtsUNum, theDegU, theUKnots, 2);
-
-            Eigen::VectorXd basisV_0 = ComputeBasisFunctions(v, theCtrlPtsVNum, theDegV, theVKnots, 0);
-            Eigen::VectorXd basisV_1 = ComputeBasisFunctions(v, theCtrlPtsVNum, theDegV, theVKnots, 1);
-            Eigen::VectorXd basisV_2 = ComputeBasisFunctions(v, theCtrlPtsVNum, theDegV, theVKnots, 2);
-
-            // 构造当前采样点的薄板能量行向量
-            Eigen::RowVectorXd row_uu = Eigen::KroneckerProduct(basisU_2.transpose(), basisV_0.transpose());
-            Eigen::RowVectorXd row_vv = Eigen::KroneckerProduct(basisU_0.transpose(), basisV_2.transpose());
-            Eigen::RowVectorXd row_uv = Eigen::KroneckerProduct(basisU_1.transpose(), basisV_1.transpose());
-
-            // 薄板能量: uu + 2*uv + vv
-            Eigen::RowVectorXd thinPlateRow = row_uu + 2.0 * row_uv + row_vv;
-
-            // 乘以积分权重
-            Standard_Real weight = ComputeIntegrationWeight(u, v, uSamples, vSamples, i, j);
-            D_tp.row(sampleIndex) = thinPlateRow * weight;
-
-            sampleIndex++;
-        }
-    }
-
-    return D_tp;
-}
-
 
 
 // 偏移曲面拟合
@@ -2435,20 +2155,6 @@ void GuidedCoonsSurfGenerator::FitOffsetSurface(const std::vector<Eigen::Vector3
         H_sparse = H.sparseView();
         b_sparse = b.sparseView();
 
-        /*
-        // 替换原来的 ConstructVariableConvMat 调用
-        Eigen::MatrixXd D_tp = ConstructThinPlateMatrix(
-            aCtrlPtsUNum, aCtrlPtsVNum, theUKnots, theVKnots, theDegU, theDegV);
-
-
-        // 添加正则化项 - 关键修复
-        double regularization = 1e-8;
-
-        H = (1 - FAIRNESS_WEIGHT) * (NT * N) + FAIRNESS_WEIGHT * (D_tp.transpose() * D_tp);
-        Eigen::MatrixXd regMatrix = regularization * Eigen::MatrixXd::Identity(H.rows(), H.cols());
-        H += regMatrix;
-        b = (1 - FAIRNESS_WEIGHT) * (N.transpose() * O);
-        */
     }
     else 
     {
@@ -2467,7 +2173,7 @@ void GuidedCoonsSurfGenerator::FitOffsetSurface(const std::vector<Eigen::Vector3
             sample_num = std::max(3, sample_num);
 
             // 获取Lobatto积分数据
-            const QuadratureData* lobatto_data = getQuadratureData(sample_num);
+            const Lobatto::QuadratureData* lobatto_data = getQuadratureData(sample_num);
 
             if (lobatto_data != nullptr) {
                 // 使用[0,1]区间的Lobatto节点
@@ -2655,109 +2361,6 @@ void GuidedCoonsSurfGenerator::FitOffsetSurface(const std::vector<Eigen::Vector3
         }
     }
 
-
-/*
-// 构建W矩阵：设置光顺能量的参数alpha
-Eigen::MatrixXd aMatrixW;
-BuildMatrixWeight((Standard_Integer)thePntParamsU.size(), aCtrlPtsUNum, aCtrlPtsVNum, FAIRNESS_WEIGHT, aMatrixW);
-
-    // 计算N矩阵：投影点参数的基函数系数矩阵
-    Eigen::MatrixXd aMatrixN;
-    BuildMatrixUnconstraint(thePntParamsU, thePntParamsV, theUKnots, theVKnots, theDegU, theDegV, aCtrlPtsUNum, aCtrlPtsVNum, aMatrixN);
-
-    // 构建O矩阵：偏移向量矩阵
-    Eigen::MatrixXd theMatrixO = Eigen::MatrixXd::Zero(aMatrixN.rows(), 3);
-    for (Standard_Integer i = (Standard_Integer)theMatrixO.rows() - (Standard_Integer)theSamplePntOffsets.size(); i < (Standard_Integer)theMatrixO.rows(); ++i)
-    {
-        theMatrixO(i, 0) = theSamplePntOffsets[i - theMatrixO.rows() + theSamplePntOffsets.size()](0);
-        theMatrixO(i, 1) = theSamplePntOffsets[i - theMatrixO.rows() + theSamplePntOffsets.size()](1);
-        theMatrixO(i, 2) = theSamplePntOffsets[i - theMatrixO.rows() + theSamplePntOffsets.size()](2);
-    }
-
-    // 改为叠加曲面光顺
-
-    auto diffs = CalGrevilleCoordDiffs(m_originalSurf);
-    Eigen::MatrixXd I = ConstructVariableConvMat(aCtrlPtsUNum, aCtrlPtsVNum, diffs.first, diffs.second);
-    Eigen::MatrixXd O0 = Eigen::MatrixXd::Zero(theMatrixO.rows(), I.cols());
-    O0.block(0, 0, I.rows(), I.cols()) = I;
-    
-    TColgp_Array2OfPnt originalCtrlPnts = m_originalSurf->Poles();
-    Eigen::MatrixXd theCtrlPoints0 = Eigen::MatrixXd::Zero(originalCtrlPnts.Size(), 3);
-    int t = 0;
-    for (Standard_Integer i = 1; i <= aCtrlPtsUNum; ++i)
-    {
-        for (Standard_Integer j = 1; j <= aCtrlPtsVNum; ++j)
-        {
-            theCtrlPoints0(t, 0) = originalCtrlPnts(i, j).X();
-            theCtrlPoints0(t, 1) = originalCtrlPnts(i, j).Y();
-            theCtrlPoints0(t, 2) = originalCtrlPnts(i, j).Z();
-            t++;
-        }
-    }
-
-    theMatrixO = theMatrixO - O0 * theCtrlPoints0;
-    
-    Eigen::MatrixXd MT = aMatrixM.transpose();
-    //Eigen::MatrixXd NTWN = aMatrixN.transpose() * aMatrixW * aMatrixN;
-    //Eigen::MatrixXd NTWO = aMatrixN.transpose() * aMatrixW * theMatrixO;
-    // 改为稀疏矩阵
-    Eigen::SparseMatrix<Standard_Real> N_sparse = aMatrixN.sparseView();
-    Eigen::SparseMatrix<Standard_Real> NT_sparse = aMatrixN.transpose().sparseView();
-    Eigen::SparseMatrix<Standard_Real> W_sparse = aMatrixW.sparseView();
-    Eigen::SparseMatrix<Standard_Real> O_sparse = theMatrixO.sparseView();
-
-    Eigen::SparseMatrix<Standard_Real> NTWN_sparse = NT_sparse * W_sparse * N_sparse;
-    Eigen::SparseMatrix<Standard_Real> NTWO_sparse = NT_sparse * W_sparse * O_sparse;
-
-    Eigen::MatrixXd NTWN = NTWN_sparse.toDense();
-    Eigen::MatrixXd NTWO = NTWO_sparse.toDense();
-
-    // 写成分块矩阵形式
-    //[ NTWN MT ] [ P ] = [ NTWO ]
-    //[  M   0  ] [ L ] = [   0  ]
-    // 
-    // 即 Ax = B
-
-    Standard_Integer rowsA = (Standard_Integer)NTWN.rows() + (Standard_Integer)aMatrixM.rows();
-    Standard_Integer colsA = (Standard_Integer)NTWN.cols() + (Standard_Integer)MT.cols();
-    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(rowsA, colsA);
-    A.block(0, 0, NTWN.rows(), NTWN.cols()) = NTWN;
-    A.block(0, NTWN.cols(), MT.rows(), MT.cols()) = MT;
-    A.block(NTWN.rows(), 0, aMatrixM.rows(), aMatrixM.cols()) = aMatrixM;
-
-    Standard_Integer rowsB = (Standard_Integer)A.rows();
-    Standard_Integer colsB = (Standard_Integer)NTWO.cols();
-    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(rowsB, colsB);
-    B.block(0, 0, NTWO.rows(), NTWO.cols()) = NTWO;
-
-    // QR分解
-    Eigen::VectorXd VBx(B.rows());
-    Eigen::VectorXd VBy(B.rows());
-    Eigen::VectorXd VBz(B.rows());
-    for (Standard_Integer i = 0; i < (Standard_Integer)B.rows(); ++i) {
-        VBx(i) = B(i, 0);
-        VBy(i) = B(i, 1);
-        VBz(i) = B(i, 2);
-    }
-
-    //Eigen::FullPivHouseholderQR<Eigen::MatrixXd> qr(A);
-    //Eigen::VectorXd Sx = qr.solve(VBx);
-    //Eigen::VectorXd Sy = qr.solve(VBy);
-    //Eigen::VectorXd Sz = qr.solve(VBz);
-
-    // 改为稀疏矩阵求解：最小二乘共轭梯度法
-    //Eigen::SparseLU<Eigen::SparseMatrix<Standard_Real>> solver;
-    Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<Standard_Real>> solver;
-    solver.compute(A.sparseView());
-    Eigen::VectorXd Sx = solver.solve(VBx);
-    Eigen::VectorXd Sy = solver.solve(VBy);
-    Eigen::VectorXd Sz = solver.solve(VBz);
-
-    for (Standard_Integer i = 0; i < aCtrlPtsUNum * aCtrlPtsVNum; ++i)
-    {
-        theCtrlPoints[i] = Eigen::Vector3d(Sx(i), Sy(i), Sz(i));
-    }
-    */
 }
 
 // 构建约束项矩阵
@@ -2837,13 +2440,6 @@ void GuidedCoonsSurfGenerator::BuildMatrixUnconstraint(const std::vector<Standar
     // 结合格雷维尔横坐标的光顺能量
     auto diffs = CalGrevilleCoordDiffs(m_originalSurf);
     Eigen::MatrixXd I = ConstructVariableConvMat(theCtrlPtsUNum, theCtrlPtsVNum, diffs.first, diffs.second);
-
-    /*
-    // 构造矩阵 N
-    theMatrixN = Eigen::MatrixXd::Zero(I.rows() + Nhat.rows(), I.cols());
-    theMatrixN.block(0, 0, I.rows(), I.cols()) = I;
-    theMatrixN.block(I.rows(), 0, Nhat.rows(), Nhat.cols()) = Nhat;
-    */
 
 }
 
