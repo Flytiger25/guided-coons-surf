@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 设置OpenCASCADE路径 (Homebrew安装路径)
-set(OpenCASCADE_DIR "/opt/homebrew/Cellar/opencascade/7.9.1/lib/cmake/opencascade")
+set(OpenCASCADE_DIR "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/cmake")
 
 # 设置Eigen路径 (Homebrew安装路径)
 set(Eigen_DIR "/opt/homebrew/Cellar/eigen/3.4.0_1/share/eigen3/cmake")
@@ -14,9 +14,9 @@ set(Eigen_DIR "/opt/homebrew/Cellar/eigen/3.4.0_1/share/eigen3/cmake")
 find_package(OpenCASCADE REQUIRED)
 
 # 包含OpenCASCADE头文件目录
-include_directories("/opt/homebrew/Cellar/opencascade/7.9.1/include/opencascade")
+include_directories("C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/inc")
 
-include_directories("/opt/homebrew/Cellar/eigen/3.4.0_1/include/eigen3")
+include_directories("C:/Zsq/Develop/eigen-3.4.0")
 
 # 项目头文件目录
 include_directories("${CMAKE_SOURCE_DIR}/include")
@@ -53,7 +53,7 @@ target_link_libraries(guided_coons_surf
     TKLCAF 
     TKV3d 
     TKService
-    TKDESTEP
+    TKXDESTEP
 )
 
 # 输出信息
