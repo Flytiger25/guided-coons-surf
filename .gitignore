@@ -12,6 +12,14 @@ cmake-build-*/
 # IDE 个人配置
 .vscode/settings.json
 
+# Visual Studio
+.vs/
+*.user
+*.suo
+x64/
+Debug/
+Release/
+
 # 生成的输出文件
 data/coons/
 data/output/
