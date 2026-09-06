@@ -44,7 +44,9 @@ $$E = \int \left\| \frac{d^3 C(s)}{ds^3} \right\|^2 ds$$
 │   ├── GuidedCoonsSurfGenerator.cpp
 │   └── KnotUpdate.cpp
 ├── data/
-│   └── input/                  # 测试输入数据 (.brep)
+│   ├── input/                  # 测试输入数据 (.brep)
+│   ├── output/                 # 主输出 (STEP)
+│   └── coons/                  # 迭代调试导出 (STEP)
 ├── CMakeLists.txt
 └── README.md
 ```
@@ -53,9 +55,38 @@ $$E = \int \left\| \frac{d^3 C(s)}{ds^3} \right\|^2 ds$$
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| [OpenCASCADE](https://dev.opencascade.org/) | 7.9 | 几何内核（B 样条曲线/曲面、STEP 读写） |
-| [Eigen](https://eigen.tuxfamily.org/) | 3.4 | 线性代数（稀疏矩阵、KKT 系统求解） |
+| [OpenCASCADE](https://dev.opencascade.org/) | 7.7（Windows）/ brew 最新（macOS） | 几何内核（B 样条曲线/曲面、STEP 读写） |
+| [Eigen](https://eigen.tuxfamily.org/) | 3.4 | 线性代数（稀疏矩阵、KKT 系统求解），header-only |
 | CMake | ≥ 3.10 | 构建系统 |
+
+> **路径说明**：`CMakeLists.txt` 中 OpenCASCADE 和 Eigen 路径为 Windows 硬编码路径，请按本机实际安装位置修改。数据目录通过编译宏 `GUIDED_COONS_DATA_DIR` 注入，与运行时工作目录无关。
+
+## 构建（Windows）
+
+### 环境要求
+
+- Visual Studio 2019 / 2022（含 C++ 桌面开发工作负载）
+- [CMake](https://cmake.org/download/) ≥ 3.10
+- OpenCASCADE 7.7.0 Windows 版（已解压，如 `C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64`）
+- Eigen 3.4.0（header-only，解压即可，如 `C:/Zsq/Develop/eigen-3.4.0`）
+
+### 配置与编译
+
+```powershell
+# 在项目根目录执行（需将 cmake 加入 PATH，或用 Visual Studio 开发者终端）
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
+
+也可直接用 Visual Studio 打开 `build/guided_coons_surf.sln` 编译。
+
+### 运行
+
+```powershell
+.\build\Release\guided_coons_surf.exe
+```
+
+程序读取 `data/input/` 下的 `.brep` 边界线和引导线文件，生成曲面并导出为 STEP 格式（`data/output/`）。
 
 ## 构建（macOS）
 
@@ -65,31 +96,23 @@ $$E = \int \left\| \frac{d^3 C(s)}{ds^3} \right\|^2 ds$$
 brew install opencascade eigen cmake
 ```
 
-### 编译
+### 编译与运行
 
 ```bash
 mkdir build && cd build
 cmake ..
 make -j$(sysctl -n hw.logicalcpu)
-```
-
-> **注意**：`CMakeLists.txt` 中 OpenCASCADE 和 Eigen 路径硬编码为 Homebrew 默认路径。如果版本不同，请根据实际安装路径修改。
-
-### 运行
-
-```bash
-cd build
 ./guided_coons_surf
 ```
 
-程序读取 `data/input/` 下的 `.brep` 边界线和引导线文件，生成曲面并导出为 STEP 格式。
+> **注意**：macOS 下需将 `CMakeLists.txt` 中 OpenCASCADE / Eigen 路径改为 Homebrew 实际安装路径。
 
 ## 输入/输出
 
 - **输入**：B 样条曲线（`.brep` 或 `.step` 格式）
   - `1_boundary.brep` — 四条边界曲线
   - `1_internal.brep` — 内部引导线
-- **输出**：B 样条曲面（`.step` 格式），导出至 `data/` 目录
+- **输出**：B 样条曲面（`.step` 格式），导出至 `data/output/`；迭代中间结果导出至 `data/coons/`
 
 ## 模块说明
 

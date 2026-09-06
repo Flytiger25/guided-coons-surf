@@ -23,3 +23,6 @@ Release/
 # 生成的输出文件
 data/coons/
 data/output/
+
+# 运行日志
+run.log

@@ -25,7 +25,7 @@ void GuidedCoonsSurfGenerator::Perform()
     }
 
     TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
-    std::string filePath = "/Users/flytiger25/work/occ/data/coons/";
+    std::string filePath = std::string(GUIDED_COONS_DATA_DIR) + "/coons/";
     filePath += "coons.step";
     STEPControl_Writer stepWriter;
     stepWriter.Transfer(coonsFace, STEPControl_AsIs);
@@ -40,7 +40,7 @@ void GuidedCoonsSurfGenerator::Perform()
         m_iterateCount++;
 
         TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
-        std::string filePath = "/Users/flytiger25/work/occ/data/coons/";
+        std::string filePath = std::string(GUIDED_COONS_DATA_DIR) + "/coons/";
         filePath += "GuidedSurf_" + std::to_string(m_iterateCount) + ".step";
         STEPControl_Writer stepWriter;
         stepWriter.Transfer(coonsFace, STEPControl_AsIs);
@@ -1214,7 +1214,7 @@ void GuidedCoonsSurfGenerator::ConstructSurfWithGuideCrvs()
     // 获取采样点
     if (m_iterateCount == 0)
     {
-        GetGuideSamples();
+        GetGuideSamples(); // **等分参数的采样（点的个数取决于弧长和步长）
     }
 
     // 获取偏移量和投影点参数

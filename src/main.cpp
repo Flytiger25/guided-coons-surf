@@ -96,14 +96,14 @@ int main()
 {
 	// 获取guideCurves
 	std::vector<Handle(Geom_BSplineCurve)> guideCurves;
-	std::string brepName = "/Users/flytiger25/work/occ/data/input/1_internal.brep";
+	std::string brepName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_internal.brep";
 	// brepName += std::to_string(i);
 	// brepName += "_internal.brep";
     LoadBSplineCurves(brepName, guideCurves);
 
 	// 获取boundary
 	std::vector<Handle(Geom_BSplineCurve)> boundary;
-	brepName = "/Users/flytiger25/work/occ/data/input/1_boundary.brep";
+	brepName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_boundary.brep";
 	// brepName += std::to_string(i);
 	// brepName += "_internal.brep";
     LoadBSplineCurves(brepName, boundary);
@@ -119,7 +119,7 @@ int main()
 	}
 
     TopoDS_Face guidedFace = BRepBuilderAPI_MakeFace(guidedSurf, Precision::Confusion());
-    brepName = "/Users/flytiger25/work/occ/data/output/";
+    brepName = std::string(GUIDED_COONS_DATA_DIR) + "/output/";
 	brepName += "1_guidedCoonsSurf.step";
 	Export_step_OCC(guidedFace, brepName);
 
