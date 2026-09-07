@@ -77,6 +77,27 @@
 - 结果：✅ 成功（`ComputeEnergyMatrix` 返回 4x4 光顺矩阵 M(0,0)=37.02；`CalcNearestPoint` 正确投影）
 - 说明：编译需 `/bigobj`（CurveFair.cpp + Eigen 模板超节数限制）
 
+- commit：`b8b7a20`
+
+---
+
+### 第 5 步：迁移 GuidedCoonsSurfGenerator 核心
+
+- 时间：2026-09-07 13:40
+- 改动文件：`include/GuidedCoonsSurfGenerator.h`、`src/GuidedCoonsSurfGenerator.cpp`（核心算法，5852 行）
+- 改动要点：
+  - 类型全量替换（`Standard_*`/`gp_*`/`TCol*`/`Handle(Geom_*)` → SGK，1→0 下标重排）
+  - `Coons_G0` 曲面构造方法整体重写（`Point3DMatrix` 0-indexed、`make_shared<BSplineSurface>` 参数重排、`UDegreeElevation/VDegreeElevation` 分方向、`InsertUKnots/InsertVKnots`、坐标运算重构）
+  - `GeomAPI_ExtremaCurveCurve` → `GeomInt::CrvCrvInt`（曲线求交）
+  - `GeomAPI_ProjectPointOnSurf` → `BSplineSurface::CalcNearestPnt`
+  - `Geom_TrimmedCurve`+`GeomConvert` → `TrimCurve()->ToBSpline()`
+  - `BSplCLib::Reparametrize`+`SetKnots` → `AdjustKnots(Interval)`
+  - `GCPnts_*` 弧长 → `CurveFair::ComputeCurveLength` + `CalcParaByLength`
+- 验证方式：`test/CMakeLists.txt` 加 `gen_check` object library，编译三个核心 .cpp（`GuidedCoonsSurfGenerator`+`KnotUpdate`+`CurveFair`）；grep 无活跃 OCC 依赖
+- 结果：✅ 编译通过（0 error）
+- 简化：调试用的中间 STEP 导出（`coons.step`/`GuidedSurf_N.step`/采样点导出，原 `TopoDS_Face`/`STEPControl_Writer`）已注释掉（最终输出在 main.cpp，第 6 步处理）
+- ⚠️ 注意：编译通过 ≠ 算法语义正确，最终正确性靠第 6 步整体运行 + 第 7 步对照验证兜底
+
 - commit：待提交
 
 ---

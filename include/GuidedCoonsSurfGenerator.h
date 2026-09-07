@@ -1,22 +1,14 @@
-﻿#pragma once
-#include <TopoDS_Shape.hxx>
-#include <TopoDS_Edge.hxx>
-#include <TopoDS_Face.hxx>
-#include <Geom_BSplineCurve.hxx>
-#include <Geom_BSplineSurface.hxx>
-#include <Geom_TrimmedCurve.hxx>
-#include <GeomAPI_ProjectPointOnSurf.hxx>
-#include <STEPControl_Writer.hxx>
-#include <BRepBuilderAPI_MakeFace.hxx>
-#include <GeomAPI_ExtremaCurveCurve.hxx>
-#include <GeomConvert.hxx>
-#include <GCPnts_UniformAbscissa.hxx>
-#include <BRepBndLib.hxx>
-#include <Bnd_Box.hxx>
-#include <TopoDS_Builder.hxx>
-#include <BRep_Builder.hxx>
-#include <BRepBuilderAPI_MakeVertex.hxx>
-#include <GCPnts_AbscissaPoint.hxx>
+#pragma once
+#include <Geometry/3D/Curve/BSplineCurve3D.h>
+#include <Geometry/3D/Surface/BSplineSurface.h>
+#include <GeomBase/Point3D.h>
+#include <GeomBase/Point2D.h>
+#include <GeomBase/Vector3D.h>
+#include <GeomBase/BndBox.h>
+#include <GeomProject/GeomProject.h>
+#include <StepExchange/IStepWriter.h>
+#include <Topology/Tools/TopoBuilder.h>
+#include <Topology/Brep/Body.h>
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -2362,7 +2354,7 @@ public:
 	//! @param [In] theGuideCurves 引导线
 	//! @param [In] theTol 容差（默认为5.0）
 	//! @return 
-	GuidedCoonsSurfGenerator(const std::vector<Handle(Geom_BSplineCurve)>& boundaryCurves, const std::vector<Handle(Geom_BSplineCurve)>& guideCurves, Standard_Real theTol = 5.0);
+	GuidedCoonsSurfGenerator(const std::vector<sggk::BSplineCurve3DPtr>& boundaryCurves, const std::vector<sggk::BSplineCurve3DPtr>& guideCurves, double theTol = 5.0);
 
 	//! @brief 执行迭代生成曲面算法
 	//! @return void
@@ -2371,33 +2363,33 @@ public:
 
 	//! @brief get
 	//! @return 返回生成的带引导线的曲面
-	inline Handle(Geom_BSplineSurface) GuidedSurf() const 
+	inline sggk::BSplineSurfacePtr GuidedSurf() const 
 	{
 		return m_guidedSurf;
 	}
 
 	//! @brief get
 	//! @return 返回生成的带引导线的曲面
-	inline std::vector<Handle(Geom_BSplineCurve)> GuideCurves() const
+	inline std::vector<sggk::BSplineCurve3DPtr> GuideCurves() const
 	{
 		return m_guideCurves;
 	}
 
     //! @brief get
     //! @return 返回生成的初始Coons曲面
-    inline Handle(Geom_BSplineSurface) GetCoons() const
+    inline sggk::BSplineSurfacePtr GetCoons() const
     {
         return m_coonsSurf;
     }       
 
 	//! @brief 返回迭代是否结束
 	//! @return 结束返回true，未结束返回false
-    inline Standard_Boolean IsDone() const
+    inline bool IsDone() const
 	{
 		return m_isDone;
 	}
 
-	void SetOriginalSurf(Handle(Geom_BSplineSurface) originalSurf)
+	void SetOriginalSurf(sggk::BSplineSurfacePtr originalSurf)
 	{
 		m_originalSurf = originalSurf;
 	}
@@ -2413,7 +2405,7 @@ private:
 	//! @brief 对于三边情况构造退化边
 	//! @param [In] theBoundaryCurves 边界线
 	//! @return void
-	void AddDegenerateCurve(std::vector<Handle(Geom_BSplineCurve)>& boundaryCurves);
+	void AddDegenerateCurve(std::vector<sggk::BSplineCurve3DPtr>& boundaryCurves);
 
 	//! @brief 对给定曲线数组进行Coons曲面G0连续性处理和排列
 	//! @param [Out] curveArray 输入的曲线数组，处理后可能会被修改
@@ -2423,9 +2415,9 @@ private:
 	//! @param [In] bslpineCurve4 第四条边界曲线
 	//! @param [In] tol 容差值
 	//! @param [In] isModify 
-	//! @return Standard_Integer 返回处理结果状态码
-	Standard_Integer Arrange_Coons_G0(std::vector<Handle(Geom_BSplineCurve)>& curveArray, Handle(Geom_BSplineCurve)& bslpineCurve1,
-		Handle(Geom_BSplineCurve)& bslpineCurve2, Handle(Geom_BSplineCurve)& bslpineCurve3, Handle(Geom_BSplineCurve)& bslpineCurve4, Standard_Real tol = COONS_TOLERANCE, Standard_Integer isModify = true);
+	//! @return int 返回处理结果状态码
+	int Arrange_Coons_G0(std::vector<sggk::BSplineCurve3DPtr>& curveArray, sggk::BSplineCurve3DPtr& bslpineCurve1,
+		sggk::BSplineCurve3DPtr& bslpineCurve2, sggk::BSplineCurve3DPtr& bslpineCurve3, sggk::BSplineCurve3DPtr& bslpineCurve4, double tol = COONS_TOLERANCE, int isModify = true);
 
 	//! @brief 基于四条边界曲线构造满足G0连续性的Coons曲面
 	//! @param [In] curve1 第一条边界曲线
@@ -2434,7 +2426,7 @@ private:
 	//! @param [In] curve4 第四条边界曲线
 	//! @param [Out] mySurface_coons 构造完成的Coons曲面
 	//! @return void
-	void Coons_G0(Handle(Geom_BSplineCurve)& curve1, Handle(Geom_BSplineCurve)& curve2, Handle(Geom_BSplineCurve)& curve3, Handle(Geom_BSplineCurve)& curve4, Handle(Geom_BSplineSurface)& mySurface_coons);
+	void Coons_G0(sggk::BSplineCurve3DPtr& curve1, sggk::BSplineCurve3DPtr& curve2, sggk::BSplineCurve3DPtr& curve3, sggk::BSplineCurve3DPtr& curve4, sggk::BSplineSurfacePtr& mySurface_coons);
 
 	//! @brief 根据边界曲线对内部曲线进行裁剪处理(730新算法)
 	//! @param [Out] guideBSplineCurves 内部B样条曲线数组，处理后保留裁剪结果
@@ -2442,60 +2434,60 @@ private:
 	//! @param [In] toleranceDistance 距离容差，用于判断曲线是否在边界内
 	//! @return void
     void TrimInternalCurves(
-		std::vector<Handle(Geom_BSplineCurve)>& theInternalBSplineCurves,
-		const std::vector<Handle(Geom_BSplineCurve)>& theBoundaryCurveArray,
-		Standard_Real theToleranceDistance = 10);
+		std::vector<sggk::BSplineCurve3DPtr>& theInternalBSplineCurves,
+		const std::vector<sggk::BSplineCurve3DPtr>& theBoundaryCurveArray,
+		double theToleranceDistance = 10);
 
-	Standard_Boolean IsCurveInsideBoundaries(
-		const Handle(Geom_BSplineCurve)& theCurve,
-		std::vector<Handle(Geom_BSplineCurve)>& theBoundaryCurveArray,
-		Standard_Real theToleranceDistance = 10);
+	bool IsCurveInsideBoundaries(
+		const sggk::BSplineCurve3DPtr& theCurve,
+		std::vector<sggk::BSplineCurve3DPtr>& theBoundaryCurveArray,
+		double theToleranceDistance = 10);
 
 	// 辅助函数：判断一个点是否在由一系列二维点构成的多边形内部（使用射线法）。
-	Standard_Boolean IsPointInPolygon2D(
-		const gp_Pnt2d& theTestPoint,
-		const std::vector<gp_Pnt2d>& thePolygon2d,
-		Standard_Real theTolerance = 10);
+	bool IsPointInPolygon2D(
+		const sggk::Point2D& theTestPoint,
+		const std::vector<sggk::Point2D>& thePolygon2d,
+		double theTolerance = 10);
 
-	std::vector<gp_Pnt> DiscretizeBSplineCurve(
-		const Handle(Geom_BSplineCurve)& theCurve,
-		Standard_Integer numSegments,
-		Standard_Boolean theBoundaryFlag = Standard_True);
+	std::vector<sggk::Point3D> DiscretizeBSplineCurve(
+		const sggk::BSplineCurve3DPtr& theCurve,
+		int numSegments,
+		bool theBoundaryFlag = true);
 
-	Standard_Boolean CurvesConnectedLoop(
-		std::vector<Handle(Geom_BSplineCurve)>& theCurves,
-		Standard_Real theTolerance = 10);
+	bool CurvesConnectedLoop(
+		std::vector<sggk::BSplineCurve3DPtr>& theCurves,
+		double theTolerance = 10);
 
-	Standard_Boolean IsCurveInsideSurface(
-		const Handle(Geom_BSplineCurve)& theCurve,
-		const Handle(Geom_Surface)& theSurface,
-		const Standard_Real theTolerance);
+	bool IsCurveInsideSurface(
+		const sggk::BSplineCurve3DPtr& theCurve,
+		const sggk::SurfacePtr& theSurface,
+		const double theTolerance);
 
 	//! @brief 根据边界曲线对内部曲线进行裁剪处理
 	//! @param [Out] guideBSplineCurves 内部B样条曲线数组，处理后保留裁剪结果
 	//! @param [In] boundaryCurveArray 边界曲线数组，定义裁剪范围
 	//! @param [In] toleranceDistance 距离容差，用于判断曲线是否在边界内
 	//! @return void
-	void TrimGuideCurves(std::vector<Handle(Geom_BSplineCurve)>& guideBSplineCurves, const std::vector<Handle(Geom_BSplineCurve)>& boundaryCurveArray, Standard_Real toleranceDistance = TRIM_TOLERANCE);
+	void TrimGuideCurves(std::vector<sggk::BSplineCurve3DPtr>& guideBSplineCurves, const std::vector<sggk::BSplineCurve3DPtr>& boundaryCurveArray, double toleranceDistance = TRIM_TOLERANCE);
 
 	//! @brief 计算两条B样条曲线之间的最小距离
 	//! @param [In] guideCurve 第一条B样条曲线
 	//! @param [In] boundaryCurve 第二条B样条曲线
-	//! @return Standard_Real 返回两条曲线之间的最小距离
-	Standard_Real ComputeCurveCurveDistance(const Handle(Geom_BSplineCurve)& guideCurve, const Handle(Geom_BSplineCurve)& boundaryCurve);
+	//! @return double 返回两条曲线之间的最小距离
+	double ComputeCurveCurveDistance(const sggk::BSplineCurve3DPtr& guideCurve, const sggk::BSplineCurve3DPtr& boundaryCurve);
 
 	//! @brief 对B样条曲线数组进行逼近处理以优化曲线表示
 	//! @param [Out] curves B样条曲线数组，处理后曲线将被优化
 	//! @param [In] samplingNum 采样点数量，用于曲线逼近(默认为50)
 	//! @return void
-	void ApproximateBoundaryCurves(std::vector<Handle(Geom_BSplineCurve)>& curves, Standard_Integer samplingNum = APPROXIMATE_SAMPLING_NUM);
+	void ApproximateBoundaryCurves(std::vector<sggk::BSplineCurve3DPtr>& curves, int samplingNum = APPROXIMATE_SAMPLING_NUM);
 
 	//! @brief 根据参数点生成B样条曲线节点矢量
 	//! @param [In] params 参数点数组，用于生成节点矢量
 	//! @param [In] n 控制点数
 	//! @param [In] p 曲线次数
-	//! @return std::vector<Standard_Real> 返回生成的节点矢量
-	std::vector<Standard_Real> KnotGernerationByParams(const std::vector<Standard_Real>& params, Standard_Integer n, Standard_Integer p);
+	//! @return std::vector<double> 返回生成的节点矢量
+	std::vector<double> KnotGernerationByParams(const std::vector<double>& params, int n, int p);
 
 	//! @brief 通过迭代方法逼近点集生成B样条曲线
 	//! @param [In] insertKnots 插入节点数组，用于迭代优化
@@ -2505,17 +2497,17 @@ private:
 	//! @param [In] degree 曲线次数
 	//! @param [In] maxIterNum 最大迭代次数
 	//! @param [In] toler 逼近容差
-	//! @return Handle(Geom_BSplineCurve) 返回逼近生成的B样条曲线
-	Handle(Geom_BSplineCurve) IterateApproximate(std::vector<Standard_Real>& insertKnots, const std::vector<gp_Pnt>& pnts, std::vector<Standard_Real>& pntsParams,
-		std::vector<Standard_Real>& initKnots, Standard_Integer degree, Standard_Integer maxIterNum = 10, Standard_Real toler = 1);
+	//! @return sggk::BSplineCurve3DPtr 返回逼近生成的B样条曲线
+	sggk::BSplineCurve3DPtr IterateApproximate(std::vector<double>& insertKnots, const std::vector<sggk::Point3D>& pnts, std::vector<double>& pntsParams,
+		std::vector<double>& initKnots, int degree, int maxIterNum = 10, double toler = 1);
 
 	//! @brief 使用给定参数点和节点矢量逼近点集生成B样条曲线
 	//! @param [In] pnts 数据点集
 	//! @param [In] params 数据点对应的参数值
 	//! @param [In] fKnots 最终使用的节点矢量
 	//! @param [In] degree 曲线次数
-	//! @return Handle(Geom_BSplineCurve) 返回逼近生成的B样条曲线
-	Handle(Geom_BSplineCurve) ApproximateCurve(const std::vector<gp_Pnt>& pnts, std::vector<Standard_Real>& params, std::vector<Standard_Real>& fKnots, Standard_Integer degree);
+	//! @return sggk::BSplineCurve3DPtr 返回逼近生成的B样条曲线
+	sggk::BSplineCurve3DPtr ApproximateCurve(const std::vector<sggk::Point3D>& pnts, std::vector<double>& params, std::vector<double>& fKnots, int degree);
 
 	//! @brief 使用更详细参数设置逼近点集生成B样条曲线
 	//! @param [In] pnts 数据点集
@@ -2524,9 +2516,9 @@ private:
 	//! @param [In] mutis 节点重复度数组
 	//! @param [In] fKnots 最终使用的节点矢量
 	//! @param [In] degree 曲线次数
-	//! @return Handle(Geom_BSplineCurve) 返回逼近生成的B样条曲线
-	Handle(Geom_BSplineCurve) ApproximateCurve(const std::vector<gp_Pnt>& pnts, std::vector<Standard_Real>& pntsParams, TColStd_Array1OfReal& knots,
-		TColStd_Array1OfInteger& mutis, std::vector<Standard_Real>& fKnots, Standard_Integer degree);
+	//! @return sggk::BSplineCurve3DPtr 返回逼近生成的B样条曲线
+	sggk::BSplineCurve3DPtr ApproximateCurve(const std::vector<sggk::Point3D>& pnts, std::vector<double>& pntsParams, sggk::RealArray& knots,
+		sggk::UIntArray& mutis, std::vector<double>& fKnots, int degree);
 
 	//! @brief 计算B样条曲线在指定参数处的残差向量
 	//! @param [In] k 参数索引
@@ -2535,15 +2527,15 @@ private:
 	//! @param [In] p 曲线次数
 	//! @param [In] knots 节点矢量
 	//! @param [In] ctrlPntNum 控制点数
-	//! @return gp_Vec 返回计算得到的残差向量
-	gp_Vec CalResPnt(Standard_Integer k, const std::vector<gp_Pnt>& dataPoints, const std::vector<Standard_Real>& parameters, Standard_Integer p, std::vector<Standard_Real>& knots, Standard_Integer ctrlPntNum);
+	//! @return sggk::Vector3D 返回计算得到的残差向量
+	sggk::Vector3D CalResPnt(int k, const std::vector<sggk::Point3D>& dataPoints, const std::vector<double>& parameters, int p, std::vector<double>& knots, int ctrlPntNum);
 
 	//! @brief 将参数序列转换为B样条节点矢量和重复度
 	//! @param [In] sequence 输入的参数序列
 	//! @param [Out] knots 输出的节点矢量
 	//! @param [Out] multiplicities 输出的节点重复度数组
 	//! @return void
-	void SequenceToKnots(const std::vector<Standard_Real>& sequence, std::vector<Standard_Real>& knots, std::vector<Standard_Integer>& multiplicities);
+	void SequenceToKnots(const std::vector<double>& sequence, std::vector<double>& knots, std::vector<int>& multiplicities);
 
 	//------------------------带引导线的Coons-------------------------------
 
@@ -2560,26 +2552,26 @@ private:
 	//! @param [Out] theOffsets 偏移量
 	//! @param [In] isOriginal 是否为初始曲面（默认为true）
 	//! @return void
-	void GetSamplesOffset(std::vector<gp_Pnt2d>& thePntParams, std::vector<gp_Pnt>& theOffsets, Standard_Boolean isOriginal = Standard_True);
+	void GetSamplesOffset(std::vector<sggk::Point2D>& thePntParams, std::vector<sggk::Point3D>& theOffsets, bool isOriginal = true);
 
 	//! @brief 对曲线均匀采样
 	//! @param [In] theCurve 曲线
 	//! @param [In] theSamplesNum 采样点数量
 	//! @return 采样点数组
-	std::vector<gp_Pnt> SampleGuideCurve(const Handle(Geom_BSplineCurve)& theCurve, Standard_Real startParam, Standard_Real endParam, Standard_Integer theSamplesNum);
+	std::vector<sggk::Point3D> SampleGuideCurve(const sggk::BSplineCurve3DPtr& theCurve, double startParam, double endParam, int theSamplesNum);
 
 	//! @brief 获取点到曲面的投影点和参数，获取偏移量
 	//! @param [In] thePoints 点集
 	//! @param [In] theSurface 曲面
 	//! @param [Out] thePntParams 投影点参数
 	//! @return 偏移量数组
-	std::vector<gp_Pnt> ProjectPntsToSurf(const std::vector<gp_Pnt>& thePoints, std::vector<gp_Pnt>& theProjectionPoints, const Handle(Geom_BSplineSurface)& theSurface, std::vector<gp_Pnt2d>& thePntParams);
+	std::vector<sggk::Point3D> ProjectPntsToSurf(const std::vector<sggk::Point3D>& thePoints, std::vector<sggk::Point3D>& theProjectionPoints, const sggk::BSplineSurfacePtr& theSurface, std::vector<sggk::Point2D>& thePntParams);
 
 	//! @brief 计算偏移量
 	//! @param [In] theSamples 采样点数组
 	//! @param [In] theProjections 投影点数组
 	//! @return 偏移量数组
-	std::vector<gp_Pnt> CalOffsets(const std::vector<gp_Pnt>& theSamples, const std::vector<gp_Pnt>& theProjections);
+	std::vector<sggk::Point3D> CalOffsets(const std::vector<sggk::Point3D>& theSamples, const std::vector<sggk::Point3D>& theProjections);
 
 	//------------------------拟合偏移曲面-------------------------------
 
@@ -2593,8 +2585,8 @@ private:
 	//! @param [In] theDegV v方向degree
 	//! @param [Out] theCtrlPoints 偏移曲面控制点
 	//! @return void 
-	void FitOffsetSurface(const std::vector<Eigen::Vector3d>& theSamplePntOffsets, const std::vector<Standard_Real>& thePntParamsU, const std::vector<Standard_Real>& thePntParamsV,
-		const std::vector<Standard_Real>& theUKnots, const std::vector<Standard_Real>& theVKnots, Standard_Integer theDegU, Standard_Integer theDegV, std::vector<Eigen::Vector3d>& theCtrlPoints
+	void FitOffsetSurface(const std::vector<Eigen::Vector3d>& theSamplePntOffsets, const std::vector<double>& thePntParamsU, const std::vector<double>& thePntParamsV,
+		const std::vector<double>& theUKnots, const std::vector<double>& theVKnots, int theDegU, int theDegV, std::vector<Eigen::Vector3d>& theCtrlPoints
 	);
  
 	//! @brief 构建非约束项系数矩阵
@@ -2608,8 +2600,8 @@ private:
 	//! @param [In] theCtrlPtsVNum v方向控制点数
 	//! @param [Out] theMatrixN 非约束项系数矩阵
 	//! @return void
-	void BuildMatrixUnconstraint(const std::vector<Standard_Real>& thePntParamsU, const std::vector<Standard_Real>& thePntParamsV, const std::vector<Standard_Real>& theUKnots, 
-		const std::vector<Standard_Real>& theVKnots,Standard_Integer theDegU, Standard_Integer theDegV, Standard_Integer theCtrlPtsUNum, Standard_Integer theCtrlPtsVNum, Eigen::MatrixXd& theMatrixN
+	void BuildMatrixUnconstraint(const std::vector<double>& thePntParamsU, const std::vector<double>& thePntParamsV, const std::vector<double>& theUKnots, 
+		const std::vector<double>& theVKnots,int theDegU, int theDegV, int theCtrlPtsUNum, int theCtrlPtsVNum, Eigen::MatrixXd& theMatrixN
 	);
 
 	//! @brief 构建约束项系数矩阵
@@ -2617,7 +2609,7 @@ private:
 	//! @param [In] theCtrlPtsVNum v方向控制点数
 	//! @param [Out] theMatrixM 约束项系数矩阵
 	//! @return void
-	void BuildMatrixConstraint(Standard_Integer theCtrlPtsUNum, Standard_Integer theCtrlPtsVNum, Eigen::MatrixXd& theMatrixM);
+	void BuildMatrixConstraint(int theCtrlPtsUNum, int theCtrlPtsVNum, Eigen::MatrixXd& theMatrixM);
  
 	//! @brief 构建权重系数矩阵
 	//! @param [In] thePntParamsU u方向参数
@@ -2627,7 +2619,7 @@ private:
 	//! @param [In] alpha 光顺能量权重系数
 	//! @param [Out] theMatrixW 权重系数矩阵
 	//! @return void
-	void BuildMatrixWeight(Standard_Integer thePntParamsSize, Standard_Integer theCtrlPtsUNum, Standard_Integer theCtrlPtsVNum, Standard_Real alpha, Eigen::MatrixXd& theMatrixW);
+	void BuildMatrixWeight(int thePntParamsSize, int theCtrlPtsUNum, int theCtrlPtsVNum, double alpha, Eigen::MatrixXd& theMatrixW);
 
 	//! @brief 计算基函数值
 	//! @param [In] param 参数
@@ -2635,7 +2627,7 @@ private:
 	//! @param [In] deg 次数
 	//! @param [In] knots 节点向量
 	//! @return 基函数值
-	Standard_Real CalBasicFunction(Standard_Real param, Standard_Integer index, Standard_Integer deg, const std::vector<Standard_Real>& knots);
+	double CalBasicFunction(double param, int index, int deg, const std::vector<double>& knots);
 
 	//! @brief 计算Kronecker积
 	//! @param [In] theMatA 第一个矩阵
@@ -2668,7 +2660,7 @@ private:
 	 *       调用 CurveFair::ComputeEnergyMatrix 实现
 	 */
 	Eigen::MatrixXd ConstructCurveSmoothingMatrix(
-		const Handle(Geom_BSplineCurve)& theBSplineCurve,
+		const sggk::BSplineCurve3DPtr& theBSplineCurve,
 		int derivative_order = 2,
 		double tolerance = 1e-6
 	);
@@ -2688,7 +2680,7 @@ private:
 	 *       所有曲面参数（次数、节点向量等）自动从曲面对象中提取
 	 */
 	Eigen::MatrixXd ConstructBidirectionalSmoothingMatrix(
-		const Handle(Geom_BSplineSurface)& theBSplineSurface,
+		const sggk::BSplineSurfacePtr& theBSplineSurface,
 		const std::vector<double>& u_params,
 		const std::vector<double>& v_params,
 		int derivative_order = 2,
@@ -2700,7 +2692,7 @@ private:
 	 * @tparam MatrixType 矩阵类型（Eigen::MatrixXd 或 Eigen::SparseMatrix<double>）
 	 */
 	Eigen::MatrixXd ConstructBidirectionalSmoothingMatrixImpl(
-		const Handle(Geom_BSplineSurface)& theBSplineSurface,
+		const sggk::BSplineSurfacePtr& theBSplineSurface,
 		int n_u, int n_v,
 		int p_u, int p_v,
 		const std::vector<double>& knots_u,
@@ -2757,13 +2749,13 @@ private:
 	);
 
 
-	Standard_Integer SetSameDistribution(Handle(Geom_BSplineCurve)& C1, Handle(Geom_BSplineCurve)& C2);
+	int SetSameDistribution(sggk::BSplineCurve3DPtr& C1, sggk::BSplineCurve3DPtr& C2);
 
 	//! @brief 在容差意义下比较 x 是否等于 y
 	//! @param [In] x 第一个数
 	//! @param [In] y 第二个数
 	//! @return x 等于 y 则返回true， 否则返回false
-	inline Standard_Boolean IsEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	inline bool IsEqual(double x, double y, double tol = 1e-12)
 	{
 		return std::fabs(x - y) < tol;
 	}
@@ -2772,7 +2764,7 @@ private:
 	//! @param [In] x 第一个数
 	//! @param [In] y 第二个数
 	//! @return x 大于 y 则返回true， 否则返回false
-	inline Standard_Boolean IsGreater(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	inline bool IsGreater(double x, double y, double tol = 1e-12)
 	{
 		return (x - y) > tol;
 	}
@@ -2781,7 +2773,7 @@ private:
 	//! @param [In] x 第一个数
 	//! @param [In] y 第二个数
 	//! @return x 小于 y 则返回true， 否则返回false
-	inline Standard_Boolean IsLess(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	inline bool IsLess(double x, double y, double tol = 1e-12)
 	{
 		return (y - x) > tol;
 	}
@@ -2790,7 +2782,7 @@ private:
 	//! @param [In] x 第一个数
 	//! @param [In] y 第二个数
 	//! @return x 大于等于 y 则返回true， 否则返回false
-	inline Standard_Boolean IsGreaterOrEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	inline bool IsGreaterOrEqual(double x, double y, double tol = 1e-12)
 	{
 		return (x - y) > -tol;
 	}
@@ -2799,22 +2791,22 @@ private:
 	//! @param [In] x 第一个数
 	//! @param [In] y 第二个数
 	//! @return x 小于等于 y 则返回true， 否则返回false
-	inline Standard_Boolean IsLessOrEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	inline bool IsLessOrEqual(double x, double y, double tol = 1e-12)
 	{
 		return (y - x) > -tol;
 	}
 
 
-	Handle(Geom_BSplineSurface) m_originalSurf; // 初始曲面
-	Handle(Geom_BSplineSurface) m_coonsSurf; // Coons曲面
-	Handle(Geom_BSplineSurface) m_guidedSurf; // 引导后的曲面
-	std::vector<Handle(Geom_BSplineCurve)> m_boundaryCurves; // 输入的边界线
-	std::vector<Handle(Geom_BSplineCurve)> m_guideCurves; // 输入的内部引导线
-	std::vector<std::vector<std::pair<Standard_Real, Standard_Real>>> m_guideCurvesTrimIntervals; // 引导线裁剪区间
-	std::vector<gp_Pnt> m_samples; // 所有引导线采样点
+	sggk::BSplineSurfacePtr m_originalSurf; // 初始曲面
+	sggk::BSplineSurfacePtr m_coonsSurf; // Coons曲面
+	sggk::BSplineSurfacePtr m_guidedSurf; // 引导后的曲面
+	std::vector<sggk::BSplineCurve3DPtr> m_boundaryCurves; // 输入的边界线
+	std::vector<sggk::BSplineCurve3DPtr> m_guideCurves; // 输入的内部引导线
+	std::vector<std::vector<std::pair<double, double>>> m_guideCurvesTrimIntervals; // 引导线裁剪区间
+	std::vector<sggk::Point3D> m_samples; // 所有引导线采样点
 
-	Standard_Real m_tol; // 逼近的容差精度
-	Standard_Integer m_iterateCount; // 迭代次数
-	Standard_Boolean m_isDone; // 迭代完成的标志
+	double m_tol; // 逼近的容差精度
+	int m_iterateCount; // 迭代次数
+	bool m_isDone; // 迭代完成的标志
 };
 

@@ -64,6 +64,24 @@ add_custom_command(TARGET test_curvefair POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy "${SGK_ROOT}/sggk.lic" "$<TARGET_FILE_DIR:test_curvefair>"
 )
 
+# GuidedCoonsSurfGenerator 迁移编译检查（仅编译，看错误清单）
+add_library(gen_check OBJECT
+    ../src/GuidedCoonsSurfGenerator.cpp
+    ../src/KnotUpdate.cpp
+    ../src/CurveFair.cpp
+)
+target_include_directories(gen_check PRIVATE ../include "C:/Zsq/Develop/eigen-3.4.0")
+target_link_libraries(gen_check
+    SGGK_Foundation_ar
+    SGGK_GeomBase_ar
+    SGGK_Geometry_ar
+    SGGK_GeomProject_ar
+    SGGK_BSplineAlgo_ar
+    SGGK_Topology_ar
+    SGGK_StepExchange_ar
+    SGGK_DataExchangeBase_ar
+)
+
 target_link_libraries(sgk_smoke
     SGGK_Foundation_ar
     SGGK_GeomBase_ar
