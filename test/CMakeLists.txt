@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # /MD：动态运行时，必须与 SGK DLL（依赖 msvcp140.dll）保持一致
 # /EHsc：启用 C++ 异常
 if(MSVC)
-    add_compile_options(/utf-8 /MD /EHsc)
+    add_compile_options(/utf-8 /MD /EHsc /bigobj)
 endif()
 
 # 显式 Release，确保 _ITERATOR_DEBUG_LEVEL=0 与 SGK 的 Release DLL 一致
@@ -48,6 +48,20 @@ target_link_libraries(test_knotupdate
 add_custom_command(TARGET test_knotupdate POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${SGK_BIN}" "$<TARGET_FILE_DIR:test_knotupdate>"
     COMMAND ${CMAKE_COMMAND} -E copy "${SGK_ROOT}/sggk.lic" "$<TARGET_FILE_DIR:test_knotupdate>"
+)
+
+# CurveFair 迁移验证：编译 src/CurveFair.cpp + 测试入口（含 Eigen）
+add_executable(test_curvefair test_curvefair.cpp ../src/CurveFair.cpp)
+target_include_directories(test_curvefair PRIVATE ../include "C:/Zsq/Develop/eigen-3.4.0")
+target_link_libraries(test_curvefair
+    SGGK_Foundation_ar
+    SGGK_GeomBase_ar
+    SGGK_Geometry_ar
+    SGGK_BSplineAlgo_ar
+)
+add_custom_command(TARGET test_curvefair POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${SGK_BIN}" "$<TARGET_FILE_DIR:test_curvefair>"
+    COMMAND ${CMAKE_COMMAND} -E copy "${SGK_ROOT}/sggk.lic" "$<TARGET_FILE_DIR:test_curvefair>"
 )
 
 target_link_libraries(sgk_smoke

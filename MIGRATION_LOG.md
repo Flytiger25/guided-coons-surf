@@ -58,6 +58,25 @@
 - 验证方式：新增 `test/test_knotupdate.cpp`，单独编译 `src/KnotUpdate.cpp` + 运行；grep 确认无 OCC include
 - 结果：✅ 成功（运行输出 `newKnot=0.5 maxError=0.00375 sequences=9`，节点插入逻辑正确；无 OCC 残留）
 
+- commit：`a25a6ed`
+
+---
+
+### 第 4 步：迁移 CurveFair 模块
+
+- 时间：2026-09-07 12:10
+- 改动文件：`include/CurveFair.h`、`src/CurveFair.cpp`（OCC → SGK 类型/API 替换 + 数学自实现）
+- 改动要点：
+  - 类型：`Handle(Geom_BSplineCurve)` → `sggk::BSplineCurve3DPtr`；`gp_Pnt/gp_Vec` → `Point3D/Vector3D`；`TColStd/TColgp` → `RealArray/Point3DArray`（1→0 下标）
+  - `GeomAPI_PointsToBSpline` → `BSCrvFitting::Interpolation3D`
+  - `GeomAPI_ProjectPointOnCurve` → `BSplineCurve3D::CalcNearestPoint(pnt, param)`
+  - `GCPnts_AbscissaPoint` → 自实现 Gauss 弧长积分 + `CalcParaByLength`
+  - `BSplCLib::EvalBsplineBasis` → 自实现（NURBS Book DersBasisFuns）
+  - `math::GaussPoints/Weights` → 硬编码 Gauss-Legendre 30 点表
+- 验证方式：新增 `test/test_curvefair.cpp`，单独编译 `src/CurveFair.cpp` + 运行 `ComputeEnergyMatrix`/`CalcNearestPoint`；grep 无 OCC include
+- 结果：✅ 成功（`ComputeEnergyMatrix` 返回 4x4 光顺矩阵 M(0,0)=37.02；`CalcNearestPoint` 正确投影）
+- 说明：编译需 `/bigobj`（CurveFair.cpp + Eigen 模板超节数限制）
+
 - commit：待提交
 
 ---

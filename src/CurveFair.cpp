@@ -1,52 +1,107 @@
 ﻿#include "CurveFair.h"
-//#include "CPnts/CPnts_AbscissaPoint.cxx"
-// 定义静态成员变量
-Handle(Geom_BSplineCurve) CurveFair::m_ArcLengthMappingFunction;
+#include <BSplineAlgo/Fitting/BSCrvFitting.h>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
+#include <limits>
 
-bool isEqual(Standard_Real x, Standard_Real y, Standard_Real epsilon = 1e-10)
+// 定义静态成员变量
+sggk::BSplineCurve3DPtr CurveFair::m_ArcLengthMappingFunction;
+
+const double M_PI_VAL = 3.14159265358979323846;
+const double RESOLUTION = 1e-12;
+
+// Gauss-Legendre 30 点积分表（区间 [-1,1]）
+static const double GAUSS_PTS[30] = {
+    9.96893484074649505e-01, 9.83668123279747175e-01, 9.60021864968307548e-01,
+    9.26200047429274309e-01, 8.82560535792052625e-01, 8.29565762382768357e-01,
+    7.67777432104826185e-01, 6.97850494793315734e-01, 6.20526182989242892e-01,
+    5.36624148142019863e-01, 4.47033769538089154e-01, 3.52704725530878116e-01,
+    2.54636926167889854e-01, 1.53869913608583542e-01, 5.14718425553176914e-02,
+    -5.14718425553176984e-02, -1.53869913608583542e-01, -2.54636926167889854e-01,
+    -3.52704725530878116e-01, -4.47033769538089210e-01, -5.36624148142019863e-01,
+    -6.20526182989242892e-01, -6.97850494793315734e-01, -7.67777432104826185e-01,
+    -8.29565762382768357e-01, -8.82560535792052625e-01, -9.26200047429274309e-01,
+    -9.60021864968307548e-01, -9.83668123279747175e-01, -9.96893484074649505e-01
+};
+static const double GAUSS_WTS[30] = {
+    7.96819249616664317e-03, 1.84664683110909757e-02, 2.87847078833234002e-02,
+    3.87991925696270917e-02, 4.84026728305940665e-02, 5.74931562176190861e-02,
+    6.59742298821804907e-02, 7.37559747377051628e-02, 8.07558952294201160e-02,
+    8.68997872010829897e-02, 9.21225222377861086e-02, 9.63687371746443644e-02,
+    9.95934205867951977e-02, 1.01762389748405471e-01, 1.02852652893558924e-01,
+    1.02852652893558924e-01, 1.01762389748405471e-01, 9.95934205867951977e-02,
+    9.63687371746443644e-02, 9.21225222377861086e-02, 8.68997872010829897e-02,
+    8.07558952294201160e-02, 7.37559747377051628e-02, 6.59742298821804907e-02,
+    5.74931562176190861e-02, 4.84026728305940665e-02, 3.87991925696270917e-02,
+    2.87847078833234002e-02, 1.84664683110909757e-02, 7.96819249616664317e-03
+};
+
+bool isEqual(double x, double y, double epsilon = 1e-10)
 {
     return std::fabs(x - y) < epsilon;
 }
-bool isGreaterThan(Standard_Real x, Standard_Real y, Standard_Real epsilon = 1e-10)
+bool isGreaterThan(double x, double y, double epsilon = 1e-10)
 {
     return (x - y) > epsilon;
 }
-bool isLessThan(Standard_Real x, Standard_Real y, Standard_Real epsilon = 1e-10)
+bool isLessThan(double x, double y, double epsilon = 1e-10)
 {
     return (y - x) > epsilon;
 }
-bool isGreaterThanOrEqual(Standard_Real x, Standard_Real y, Standard_Real epsilon = 1e-10)
+bool isGreaterThanOrEqual(double x, double y, double epsilon = 1e-10)
 {
     return (x - y) > -epsilon;
 }
-bool isLessThanOrEqual(Standard_Real x, Standard_Real y, Standard_Real epsilon = 1e-10)
+bool isLessThanOrEqual(double x, double y, double epsilon = 1e-10)
 {
     return (y - x) > -epsilon;
 }
 
-
-void CurveFair::UniformCurve(Handle(Geom_BSplineCurve)& curve)
+// 拷贝一条 B 样条曲线
+static sggk::BSplineCurve3DPtr CloneBSpline(const sggk::BSplineCurve3DPtr& c)
 {
-    TColStd_Array1OfReal curveKnots(1, curve->NbKnots());
-    curve->Knots(curveKnots);
-    if (!(curveKnots(curveKnots.Lower()) == 0 && curveKnots(curveKnots.Upper()) == 1))
+    if (!c) return nullptr;
+    return std::make_shared<sggk::BSplineCurve3D>(*c);
+}
+
+// 计算曲线在 [a,b] 区间内的弧长（Gauss-Legendre 30 点数值积分 |D1|）
+double CurveFair::ComputeCurveLength(const sggk::BSplineCurve3DPtr& curve, double tol)
+{
+    if (!curve) return 0.0;
+    double a = curve->MinParam();
+    double b = curve->MaxParam();
+    double len = 0.0;
+    for (int i = 0; i < 30; ++i)
     {
-        BSplCLib::Reparametrize(0, 1, curveKnots);
-        curve->SetKnots(curveKnots);
+        double u = (b - a) * GAUSS_PTS[i] / 2.0 + (a + b) / 2.0;
+        sggk::Vector3D d1 = curve->CalcDeriv1(u);
+        len += GAUSS_WTS[i] * d1.Length();
+    }
+    return len * (b - a) / 2.0;
+}
+
+void CurveFair::UniformCurve(sggk::BSplineCurve3DPtr& curve)
+{
+    if (!curve) return;
+    double k0 = curve->Knots().front();
+    double k1 = curve->Knots().back();
+    if (!(k0 == 0 && k1 == 1))
+    {
+        curve->AdjustKnots(sggk::Interval(0.0, 1.0));
     }
 }
 
 // To compute the value of a b-spline basic function value
-// write by: xin.c
-static Standard_Real OneBasicFun(
-    const Standard_Real u,
-    const Standard_Integer i,
-    const Standard_Integer p,
-    const std::vector<Standard_Real>& Knots)
+static double OneBasicFun(
+    const double u,
+    const int i,
+    const int p,
+    const std::vector<double>& Knots)
 {
-    Standard_Real Nip, uleft, uright, saved, temp;
-    Standard_Integer m = Knots.size() - 1;
-    std::vector<Standard_Real>N(p + 1);
+    double Nip, uleft, uright, saved, temp;
+    int m = (int)Knots.size() - 1;
+    std::vector<double>N(p + 1);
     if ((i == 0 && isEqual(u, Knots[0])) || (i == m - p - 1 && isEqual(u, Knots[m])))
     {
         return 1.0;
@@ -57,8 +112,7 @@ static Standard_Real OneBasicFun(
         return 0.0;
     }
 
-
-    for (size_t j = 0; j <= p; j++)
+    for (size_t j = 0; j <= (size_t)p; j++)
     {
         if (isGreaterThanOrEqual(u, Knots[i + j]) && isLessThan(u, Knots[i + j + 1]))
         {
@@ -69,7 +123,7 @@ static Standard_Real OneBasicFun(
             N[j] = 0.0;
         }
     }
-    for (size_t k = 1; k <= p; k++)
+    for (size_t k = 1; k <= (size_t)p; k++)
     {
         if (N[0] == 0.0)
         {
@@ -79,7 +133,7 @@ static Standard_Real OneBasicFun(
         {
             saved = ((u - Knots[i]) * N[0]) / (Knots[i + k] - Knots[i]);
         }
-        for (size_t j = 0; j < p - k + 1; j++)
+        for (size_t j = 0; j < (size_t)p - k + 1; j++)
         {
             uleft = Knots[i + j + 1];
             uright = Knots[i + j + k + 1];
@@ -99,116 +153,22 @@ static Standard_Real OneBasicFun(
     Nip = N[0];
     return Nip;
 }
-//std::string format_as(Eigen::MatrixXd M)
-//{
-//    std::stringstream ss;
-//    for (Standard_Integer i = 0; i < M.rows(); i++)
-//    {
-//        for (Standard_Integer j = 0; j < M.cols(); j++)
-//        {
-//            ss << M(i, j) << " ";
-//        }
-//        ss << std::endl;
-//    }
-//    return ss.str();
-//}
-//std::string format_as(TColgp_Array1OfPnt Poles)
-//{
-//    std::stringstream ss;
-//    ss << "[";
-//    for (Standard_Integer i = Poles.Lower(); i <= Poles.Upper(); i++)
-//    {
-//        ss << "(" << Poles.Value(i).X() << ", " << Poles.Value(i).Y() << ", " << Poles.Value(i).Z() << ")";
-//    }
-//    ss << "]" << std::endl;
-//    return ss.str();
-//}
-//std::string format_as(std::vector<Standard_Real> Knots)
-//{
-//    std::stringstream ss;
-//    ss << "[";
-//    for (Standard_Integer i = 0; i < Knots.size(); i++)
-//    {
-//        ss << Knots[i];
-//        if (i != Knots.size() - 1)
-//        {
-//            ss << ", ";
-//        }
-//    }
-//    ss << "]" << std::endl;
-//    return ss.str();
-//}
-//std::string format_as(const Handle(Geom_BSplineCurve) theCurve)
-//{
-//    std::stringstream ss;
-//    Standard_Real aFirstParameter = theCurve->FirstParameter();
-//    Standard_Real aLastParameter = theCurve->LastParameter();
-//    TColStd_Array1OfReal aKnotArray = theCurve->Knots();
-//    ss << "FirstParameter:" << aFirstParameter << ", " << std::endl;
-//    ss << "LastParameter:" << aLastParameter << std::endl;
-//    ss << "[";
-//    for (Standard_Integer i = 1; i <= aKnotArray.Size(); i++)
-//    {
-//        ss << aKnotArray.Value(i);
-//        if (i == aKnotArray.Size())
-//        {
-//            ss << "]";
-//        }
-//        else
-//        {
-//            ss << ",";
-//        }
-//    }
-//    return ss.str();
-//}
-//std::string format_as(const std::vector<Handle(Geom_BSplineCurve)> theCurveArray)
-//{
-//    std::stringstream ss;
-//
-//    for (auto curve : theCurveArray)
-//    {
-//        ss << format_as(curve) << std::endl;
-//    }
-//    return ss.str();
-//}
-//std::string format_as(gp_Vec Vec)
-//{
-//    std::stringstream ss;
-//    ss << "(" << Vec.X() << ", " << Vec.Y() << ", " << Vec.Z() << ")" << " 模长 : " << Vec.Magnitude();
-//    return ss.str();
-//}
-//std::string to_string(Standard_Real value, Standard_Integer precision)
-//{
-//    std::ostringstream oss;
-//    oss << std::fixed << std::setprecision(precision) << value;
-//    return oss.str();
-//}
 
-Handle(Geom_BSplineCurve) CurveFair::GetArclengthParameterMapping(const Handle(Geom_BSplineCurve)& theCurve, const Standard_Real theTolerance)
+sggk::BSplineCurve3DPtr CurveFair::GetArclengthParameterMapping(const sggk::BSplineCurve3DPtr& theCurve, const double theTolerance)
 {
     // bspline属性
-    Standard_Real aFirstParam = theCurve->FirstParameter();
-    Standard_Real aLastParam = theCurve->LastParameter();
-
-    auto aKnotArray = theCurve->Knots();
-    const Standard_Integer aLowerKnot = aKnotArray.Lower();
-    const Standard_Integer aUpperKnot = aKnotArray.Upper();
+    double aFirstParam = theCurve->MinParam();
+    double aLastParam = theCurve->MaxParam();
 
     // bspline: 计算弧长
-    GeomAdaptor_Curve aCurveAdapter(theCurve);
-    Standard_Real aBsplineLen = 0;
-    Standard_Real aAvgLen = 0;
-    Standard_Real aParamStep = 0;
+    double aBsplineLen = 0;
+    double aAvgLen = 0;
+    double aParamStep = 0;
     try
     {
-        aBsplineLen = GCPnts_AbscissaPoint::Length(aCurveAdapter, aFirstParam, aLastParam, theTolerance);
+        aBsplineLen = ComputeCurveLength(theCurve, theTolerance);
         aAvgLen = aBsplineLen / (m_ArcLengthMappingSampleNum - 1.0);
         aParamStep = (aLastParam - aFirstParam) / (m_ArcLengthMappingSampleNum - 1.0);
-    }
-    catch (const Standard_Failure& e)
-    {
-        m_errorCode.push_back(e.GetMessageString());
-        return nullptr;
     }
     catch (const std::exception& e)
     {
@@ -221,30 +181,25 @@ Handle(Geom_BSplineCurve) CurveFair::GetArclengthParameterMapping(const Handle(G
         return nullptr;
     }
 
-    // 弧长参数化: 计算新的节点向量
-    TColStd_Array1OfReal reparamKnots(aLowerKnot, aLowerKnot + m_ArcLengthMappingSampleNum - 1);
-    TColgp_Array1OfPnt reparamPoints(aLowerKnot, aLowerKnot + m_ArcLengthMappingSampleNum - 1);
-    reparamKnots.SetValue(aLowerKnot, aFirstParam);
-    reparamPoints.SetValue(aLowerKnot, gp_Pnt(aFirstParam, aFirstParam, aFirstParam));
+    // 弧长参数化: 计算新的节点向量与采样点
+    std::vector<double> reparamKnots;
+    std::vector<sggk::Point3D> reparamPoints;
+    reparamKnots.push_back(aFirstParam);
+    reparamPoints.push_back(sggk::Point3D(aFirstParam, aFirstParam, aFirstParam));
 
-    Standard_Real curLen = 0.0;
-    Standard_Real curParam = aFirstParam;
-    for (Standard_Integer i = aLowerKnot + 1; i < m_ArcLengthMappingSampleNum; i++)
+    double curLen = 0.0;
+    double curParam = aFirstParam;
+    for (int i = 1; i < (int)m_ArcLengthMappingSampleNum - 1; i++)
     {
         curLen += aAvgLen;
         curParam += aParamStep;
 
         try
         {
-            GCPnts_AbscissaPoint gap(aCurveAdapter, curLen, aFirstParam);
-            Standard_Real tparam = gap.Parameter();
-            reparamKnots.SetValue(i, curParam);
-            reparamPoints.SetValue(i, gp_Pnt(tparam, tparam, tparam));
-        }
-        catch (const Standard_Failure& e)
-        {
-            m_errorCode.push_back(e.GetMessageString());
-            return nullptr;
+            sggk::Point3D p;
+            double tparam = theCurve->CalcParaByLength(curLen, aFirstParam, p, theTolerance);
+            reparamKnots.push_back(curParam);
+            reparamPoints.push_back(sggk::Point3D(tparam, tparam, tparam));
         }
         catch (const std::exception& e)
         {
@@ -258,141 +213,212 @@ Handle(Geom_BSplineCurve) CurveFair::GetArclengthParameterMapping(const Handle(G
         }
     }
 
-    reparamKnots.SetValue(m_ArcLengthMappingSampleNum, aLastParam);
-    reparamPoints.SetValue(m_ArcLengthMappingSampleNum, gp_Pnt(aLastParam, aLastParam, aLastParam));
+    reparamKnots.push_back(aLastParam);
+    reparamPoints.push_back(sggk::Point3D(aLastParam, aLastParam, aLastParam));
 
-    return GeomAPI_PointsToBSpline
-    (
-        reparamPoints,
-        reparamKnots,
-        theCurve->Degree(),
-        theCurve->Degree(),
-        GeomAbs_C0,
-        1e-11
-    );
+    // 用 BSCrvFitting 插值拟合弧长映射函数 f(s) = t
+    sggk::BSCrv3DInterpolationOpts opts;
+    opts.degree = theCurve->Degree();
+    opts.params = reparamKnots;
+    sggk::BSCrvFitting3DResult res = sggk::BSCrvFitting::Interpolation3D(reparamPoints, opts);
+    return res.curve;
 }
 
-Standard_Real CurveFair::f(
-    const Standard_Real theParameter,
-    const Standard_Integer k)
+double CurveFair::f(
+    const double theParameter,
+    const int k)
 {
-    if (k == 0) return m_ArcLengthMappingFunction->Value(theParameter).X();
-    gp_Vec DerivateVector = m_ArcLengthMappingFunction->DN(theParameter, k);
-    return DerivateVector.X();
+    if (k == 0) return m_ArcLengthMappingFunction->CalcPoint(theParameter).X();
+    if (k == 1) return m_ArcLengthMappingFunction->CalcDeriv1(theParameter).X();
+    if (k == 2) return m_ArcLengthMappingFunction->CalcDeriv2(theParameter).X();
+    if (k == 3) return m_ArcLengthMappingFunction->CalcDeriv3(theParameter).X();
+    return 0.0;
 }
 
-gp_Vec CurveFair::Ds(Handle(Geom_BSplineCurve)& theBSplineCurve, Standard_Real sParameter, Standard_Integer k)
+sggk::Vector3D CurveFair::Ds(sggk::BSplineCurve3DPtr& theBSplineCurve, double sParameter, int k)
 {
-    if (theBSplineCurve.IsNull())
-        return gp_Vec(0, 0, 0);
+    if (!theBSplineCurve)
+        return sggk::Vector3D(0, 0, 0);
 
-    // 弧长参数 s 转换为曲线参数 u
     m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve);
-    Standard_Real u = f(sParameter, 0);
+    double u = f(sParameter, 0);
 
-    // f'(s), f''(s), f'''(s)
-    Standard_Real f1 = f(sParameter, 1);
-    Standard_Real f2 = f(sParameter, 2);
-    Standard_Real f3 = f(sParameter, 3);
+    double f1 = f(sParameter, 1);
+    double f2 = f(sParameter, 2);
+    double f3 = f(sParameter, 3);
 
-    // 调用内置接口获取高阶导数
-    gp_Vec D1 = theBSplineCurve->DN(u, 1);
+    sggk::Vector3D D1 = theBSplineCurve->CalcDeriv1(u);
     if (k == 1)
-        return D1.Multiplied(f1);
+        return D1 * f1;
 
-    gp_Vec D2 = theBSplineCurve->DN(u, 2);
+    sggk::Vector3D D2 = theBSplineCurve->CalcDeriv2(u);
     if (k == 2)
-        return D2.Multiplied(f1 * f1).Added(D1.Multiplied(f2));
+        return D2 * (f1 * f1) + D1 * f2;
 
-    gp_Vec D3 = theBSplineCurve->DN(u, 3);
+    sggk::Vector3D D3 = theBSplineCurve->CalcDeriv3(u);
     if (k == 3)
-        return D3.Multiplied(f1 * f1 * f1)
-        .Added(D2.Multiplied(3.0 * f1 * f2))
-        .Added(D1.Multiplied(f3));
+        return D3 * (f1 * f1 * f1) + D2 * (3.0 * f1 * f2) + D1 * f3;
 
     if (k == 0)
-        return gp_Vec(theBSplineCurve->Value(u).X(), theBSplineCurve->Value(u).Y(), theBSplineCurve->Value(u).Z());
+    {
+        sggk::Point3D p = theBSplineCurve->CalcPoint(u);
+        return sggk::Vector3D(p.X(), p.Y(), p.Z());
+    }
 
-    return gp_Vec(0, 0, 0);
+    return sggk::Vector3D(0, 0, 0);
 }
 
-// CurveFair::D 函数的实现
-gp_Vec CurveFair::Dt(Handle(Geom_BSplineCurve)& theBSplineCurve, Standard_Real tParameter, Standard_Integer k)
+sggk::Vector3D CurveFair::Dt(sggk::BSplineCurve3DPtr& theBSplineCurve, double tParameter, int k)
 {
     m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve);
     return Ds(theBSplineCurve, f_inverse(theBSplineCurve, tParameter), k);
 }
 
-
-Standard_Real CurveFair::BasisFunctionDerivative(
-    const Standard_Real u,
-    const Standard_Integer i,
-    const Standard_Integer p,
-    const Standard_Integer k,
-    const std::vector<Standard_Real>& Knots)
+double CurveFair::BasisFunctionDerivative(
+    const double u,
+    const int i,
+    const int p,
+    const int k,
+    const std::vector<double>& Knots)
 {
-    // 0阶导，直接返回基函数值
     if (k == 0)
     {
         return OneBasicFun(u, i, p, Knots);
     }
 
-    // 当k > p时，导数为0, 当p = 0时，导数为0
     if (k > p || p == 0)
     {
         return 0.0;
     }
 
-    // 计算第一项: (p / (u_{i+p} - u_i)) * N^{(k-1)}_{i,p-1}
-    Standard_Real Term1 = 0.0;
-    Standard_Real Denominator1 = Knots[i + p] - Knots[i];
-    if (std::abs(Denominator1) > std::numeric_limits<Standard_Real>::epsilon())
+    double Term1 = 0.0;
+    double Denominator1 = Knots[i + p] - Knots[i];
+    if (std::abs(Denominator1) > std::numeric_limits<double>::epsilon())
     {
         Term1 = (p / Denominator1) * BasisFunctionDerivative(u, i, p - 1, k - 1, Knots);
     }
 
-    // 计算第二项: (p / (u_{i+p+1} - u_{i+1})) * N^{(k-1)}_{i+1,p-1}
-    Standard_Real Term2 = 0.0;
-    Standard_Real Denominator2 = Knots[i + p + 1] - Knots[i + 1];
-    if (std::abs(Denominator2) > std::numeric_limits<Standard_Real>::epsilon())
+    double Term2 = 0.0;
+    double Denominator2 = Knots[i + p + 1] - Knots[i + 1];
+    if (std::abs(Denominator2) > std::numeric_limits<double>::epsilon())
     {
         Term2 = (p / Denominator2) * BasisFunctionDerivative(u, i + 1, p - 1, k - 1, Knots);
     }
 
-    // 根据公式计算k阶导数
     return Term1 - Term2;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::CreateNewBSplineCurve(
-    const Handle(Geom_BSplineCurve)& theOriginalCurve,
+// 自实现 BSplCLib::EvalBsplineBasis（NURBS Book DersBasisFuns 算法）
+void CurveFair::EvalBsplineBasis(
+    int maxDeriv, int deg, const std::vector<double>& U, double u, int& firstIndex,
+    Eigen::MatrixXd& basis)
+{
+    int m = (int)U.size() - 1;
+    int n = m - deg - 1;
+
+    // FindSpan
+    int span;
+    if (u >= U[n + 1] - 1e-15) span = n;
+    else if (u <= U[deg] + 1e-15) span = deg;
+    else
+    {
+        int low = deg, high = n + 1;
+        int mid = (low + high) / 2;
+        while (u < U[mid] || u >= U[mid + 1])
+        {
+            if (u < U[mid]) high = mid;
+            else low = mid;
+            mid = (low + high) / 2;
+        }
+        span = mid;
+    }
+    firstIndex = span - deg + 1;  // 1-indexed（与 OCC 一致）
+
+    // DersBasisFuns
+    std::vector<std::vector<double>> ndu(deg + 1, std::vector<double>(deg + 1, 0.0));
+    ndu[0][0] = 1.0;
+    std::vector<double> left(deg + 1), right(deg + 1);
+    for (int j = 1; j <= deg; j++)
+    {
+        left[j] = u - U[span + 1 - j];
+        right[j] = U[span + j] - u;
+        double saved = 0.0;
+        for (int r = 0; r < j; r++)
+        {
+            ndu[j][r] = right[r + 1] + left[j - r];
+            double temp = ndu[r][j - 1] / ndu[j][r];
+            ndu[r][j] = saved + right[r + 1] * temp;
+            saved = left[j - r] * temp;
+        }
+        ndu[j][j] = saved;
+    }
+
+    std::vector<std::vector<double>> ders(maxDeriv + 1, std::vector<double>(deg + 1, 0.0));
+    for (int j = 0; j <= deg; j++) ders[0][j] = ndu[j][deg];
+
+    std::vector<std::vector<double>> a(2, std::vector<double>(deg + 1, 0.0));
+    for (int r = 0; r <= deg; r++)
+    {
+        int s1 = 0, s2 = 1;
+        a[0][0] = 1.0;
+        for (int k = 1; k <= maxDeriv; k++)
+        {
+            double d = 0.0;
+            int rk = r - k;
+            int pk = deg - k;
+            if (r >= k)
+            {
+                a[s2][0] = a[s1][0] / ndu[pk + 1][rk];
+                d = a[s2][0] * ndu[rk][pk];
+            }
+            int j1 = (rk >= -1) ? 1 : -rk;
+            int j2 = (r - 1 <= pk) ? k - 1 : deg - r;
+            for (int j = j1; j <= j2; j++)
+            {
+                a[s2][j] = (a[s1][j] - a[s1][j - 1]) / ndu[pk + 1][rk + j];
+                d += a[s2][j] * ndu[rk + j][pk];
+            }
+            if (r <= pk)
+            {
+                a[s2][k] = -a[s1][k - 1] / ndu[pk + 1][r];
+                d += a[s2][k] * ndu[r][pk];
+            }
+            ders[k][r] = d;
+            std::swap(s1, s2);
+        }
+    }
+    int rfact = deg;
+    for (int k = 1; k <= maxDeriv; k++)
+    {
+        for (int j = 0; j <= deg; j++) ders[k][j] *= rfact;
+        rfact *= (deg - k);
+    }
+
+    basis.resize(maxDeriv + 1, deg + 1);
+    basis.setZero();
+    for (int k = 0; k <= maxDeriv; k++)
+        for (int j = 0; j <= deg; j++)
+            basis(k, j) = ders[k][j];
+}
+
+sggk::BSplineCurve3DPtr CurveFair::CreateNewBSplineCurve(
+    const sggk::BSplineCurve3DPtr& theOriginalCurve,
     const Eigen::MatrixXd& newD)
 {
-    // 获取原始曲线的 Degree
-    Standard_Integer degree = theOriginalCurve->Degree();
-    // 获取原始曲线的 节点向量和次数
-    TColStd_Array1OfReal knots(1, theOriginalCurve->NbKnots());
-    theOriginalCurve->Knots(knots);
+    int degree = theOriginalCurve->Degree();
+    sggk::RealArray knots = theOriginalCurve->Knots();
+    sggk::UIntArray multiplicities = theOriginalCurve->Mults();
 
-    TColStd_Array1OfInteger multiplicities(1, theOriginalCurve->NbKnots());
-    theOriginalCurve->Multiplicities(multiplicities);
-
-    // 将 Eigen::Matrix3d 转换为 OCC 控制点数组
-    TColgp_Array1OfPnt Poles(1, newD.rows()); // OCC 控制点数组
-    for (Standard_Integer i = 0; i < newD.rows(); i++)
+    sggk::Point3DArray poles(newD.rows());
+    for (int i = 0; i < newD.rows(); i++)
     {
-        Poles.SetValue(i + 1, gp_Pnt(newD(i, 0), newD(i, 1), newD(i, 2)));
+        poles[i] = sggk::Point3D(newD(i, 0), newD(i, 1), newD(i, 2));
     }
-    // 创建新的 B 样条曲线
-    Handle(Geom_BSplineCurve) newCurve;
+
+    sggk::BSplineCurve3DPtr newCurve;
     try
     {
-        newCurve = new Geom_BSplineCurve(
-            Poles, knots, multiplicities, degree);
-    }
-    catch (const Standard_Failure& e)
-    {
-        m_errorCode.push_back(e.GetMessageString());
-        return nullptr;
+        newCurve = std::make_shared<sggk::BSplineCurve3D>(degree, poles, knots, multiplicities);
     }
     catch (const std::exception& e)
     {
@@ -409,93 +435,76 @@ Handle(Geom_BSplineCurve) CurveFair::CreateNewBSplineCurve(
     return newCurve;
 }
 
-Standard_Real CurveFair::GetCurveCurveHausdorffDistance(
-    const Handle(Geom_BSplineCurve) theOriginalCurve,
-    const Handle(Geom_BSplineCurve) theOperateCurve)
+double CurveFair::GetCurveCurveHausdorffDistance(
+    const sggk::BSplineCurve3DPtr theOriginalCurve,
+    const sggk::BSplineCurve3DPtr theOperateCurve)
 {
-    Standard_Real firstParameter = theOriginalCurve->FirstParameter();
-    Standard_Real lastParameter = theOriginalCurve->LastParameter();
-    const Standard_Integer sampleNum = 100;
-    const Standard_Real step = (lastParameter - firstParameter) / sampleNum;
-    Standard_Real hausdorffDistanceResult = INT_MIN;
-    for (Standard_Real t = firstParameter; t <= lastParameter; t += step)
+    double firstParameter = theOriginalCurve->MinParam();
+    double lastParameter = theOriginalCurve->MaxParam();
+    const int sampleNum = 100;
+    const double step = (lastParameter - firstParameter) / sampleNum;
+    double hausdorffDistanceResult = INT_MIN;
+    for (double t = firstParameter; t <= lastParameter; t += step)
     {
-        gp_Pnt aPntOnOriginalCurve = theOriginalCurve->Value(t);
-        GeomAPI_ProjectPointOnCurve aProjector(aPntOnOriginalCurve, theOperateCurve);
-        // 检查是否找到投影点
-        if (!aProjector.NbPoints())
-        {
-            continue;
-        }
-
-        Standard_Real minDistance = INT_MAX;
-        for (Standard_Integer i = 1; i <= aProjector.NbPoints(); i++)
-        {
-            minDistance = std::min(minDistance, aProjector.Distance(i));
-        }
-
+        sggk::Point3D aPntOnOriginalCurve = theOriginalCurve->CalcPoint(t);
+        double param;
+        sggk::Point3D projected = theOperateCurve->CalcNearestPoint(aPntOnOriginalCurve, param);
+        double minDistance = aPntOnOriginalCurve.DistanceTo(projected);
         hausdorffDistanceResult = std::max(hausdorffDistanceResult, minDistance);
     }
     return hausdorffDistanceResult;
 }
 
-Standard_Real CurveFair::GetFitPointsCurveHausdorffDistance(
-    const std::vector<std::pair<gp_Pnt, Standard_Real>> theFitPointParams,
-    const Handle(Geom_BSplineCurve)& theOperateCurve)
+double CurveFair::GetFitPointsCurveHausdorffDistance(
+    const std::vector<std::pair<sggk::Point3D, double>> theFitPointParams,
+    const sggk::BSplineCurve3DPtr& theOperateCurve)
 {
-    Handle(Geom_BSplineCurve) mappingCurve = GetArclengthParameterMapping(theOperateCurve);
-    Standard_Real hausdorffDistance = -1.0;
-    std::vector<gp_Pnt> pointsOnCurve;
+    sggk::BSplineCurve3DPtr mappingCurve = GetArclengthParameterMapping(theOperateCurve);
+    double hausdorffDistance = -1.0;
+    std::vector<sggk::Point3D> pointsOnCurve;
     for (auto p : theFitPointParams)
     {
-        gp_Pnt fitPoint = p.first;
-        Standard_Real s = p.second;
-        Standard_Real t = mappingCurve->Value(s).X();
-        gp_Pnt pointOnCurve = theOperateCurve->Value(t);
+        sggk::Point3D fitPoint = p.first;
+        double s = p.second;
+        double t = mappingCurve->CalcPoint(s).X();
+        sggk::Point3D pointOnCurve = theOperateCurve->CalcPoint(t);
         pointsOnCurve.push_back(pointOnCurve);
-        Standard_Real distance = fitPoint.Distance(pointOnCurve);
+        double distance = fitPoint.DistanceTo(pointOnCurve);
         hausdorffDistance = std::max(hausdorffDistance, distance);
     }
-
-    //SurfaceModelingTool::ExportPoints(pointsOnCurve, CurveFair::ExportFilePath + "/Test/pointsOnCurve.step", false);
     return hausdorffDistance;
 }
 
-Standard_Real CurveFair::GetPointCurveHausdorffDistance(
-    const std::vector<gp_Pnt>& thePoints,
-    const Handle(Geom_BSplineCurve)& theCurve)
+double CurveFair::GetPointCurveHausdorffDistance(
+    const std::vector<sggk::Point3D>& thePoints,
+    const sggk::BSplineCurve3DPtr& theCurve)
 {
-    if (thePoints.empty() || theCurve.IsNull())
+    if (thePoints.empty() || !theCurve)
         return -1.0;
 
-    Standard_Real hausdorffDistance = -1.0;
+    double hausdorffDistance = -1.0;
 
     for (const auto& pt : thePoints)
     {
-        // 使用 GeomAPI_ProjectPointOnCurve 投影点到曲线，获取最近点
-        GeomAPI_ProjectPointOnCurve projector(pt, theCurve);
-        if (!projector.NbPoints()) continue;
-
-        gp_Pnt projected = projector.NearestPoint();
-        Standard_Real dist = pt.Distance(projected);
-
+        double param;
+        sggk::Point3D projected = theCurve->CalcNearestPoint(pt, param);
+        double dist = pt.DistanceTo(projected);
         hausdorffDistance = std::max(hausdorffDistance, dist);
     }
 
     return hausdorffDistance;
 }
 
-
-Standard_Real CurveFair::f_inverse(const Handle(Geom_BSplineCurve)& theBSplineCurve, Standard_Real t)
+double CurveFair::f_inverse(const sggk::BSplineCurve3DPtr& theBSplineCurve, double t)
 {
-    Standard_Real leftParam = theBSplineCurve->FirstParameter();
-    Standard_Real rightParam = theBSplineCurve->LastParameter();
+    double leftParam = theBSplineCurve->MinParam();
+    double rightParam = theBSplineCurve->MaxParam();
     if (t == leftParam) return leftParam;
     if (t == rightParam) return rightParam;
     while (true)
     {
-        Standard_Real mid = leftParam + (rightParam - leftParam) / 2;
-        Standard_Real t_mid = f(mid);
+        double mid = leftParam + (rightParam - leftParam) / 2;
+        double t_mid = f(mid);
         if (std::abs(t_mid - t) < 1e-10) return mid;
         if (t_mid > t)
         {
@@ -509,56 +518,46 @@ Standard_Real CurveFair::f_inverse(const Handle(Geom_BSplineCurve)& theBSplineCu
     return 0;
 }
 
-std::vector<std::pair<gp_Pnt, Standard_Real>> CurveFair::ReCalculateFitPointParameters(
-    const std::vector<gp_Pnt>& theFitPoints,
-    const Handle(Geom_BSplineCurve)& theCurve
+std::vector<std::pair<sggk::Point3D, double>> CurveFair::ReCalculateFitPointParameters(
+    const std::vector<sggk::Point3D>& theFitPoints,
+    const sggk::BSplineCurve3DPtr& theCurve
 )
 {
-    std::vector<std::pair<gp_Pnt, Standard_Real>> result;
+    std::vector<std::pair<sggk::Point3D, double>> result;
     if (theFitPoints.empty())
     {
         return result;
     }
 
-    if (!theCurve.IsNull())
+    if (theCurve)
     {
-        // 有曲线，进行投影和弧长映射
-        GCPnts_AbscissaPoint abscissa;
-        GeomAdaptor_Curve adaptor(theCurve);
-        Standard_Real first = adaptor.FirstParameter();
-        Standard_Real last = adaptor.LastParameter();
-        Standard_Real totalLength = GCPnts_AbscissaPoint::Length(adaptor, first, last);
+        double first = theCurve->MinParam();
+        double last = theCurve->MaxParam();
+        double totalLength = ComputeCurveLength(theCurve);
 
         for (const auto& pt : theFitPoints)
         {
-            GeomAPI_ProjectPointOnCurve projector(pt, theCurve);
-            if (!projector.NbPoints())
-            {
-                result.emplace_back(pt, first); // 若无法投影，使用起始参数
-                continue;
-            }
-
-            Standard_Real u = projector.LowerDistanceParameter();
-            Standard_Real partialLength = GCPnts_AbscissaPoint::Length(adaptor, first, u);
-            Standard_Real normalized = (partialLength / totalLength) * (last - first) + first;
+            double u = 0;
+            sggk::Point3D projected = theCurve->CalcNearestPoint(pt, u);
+            double partialLength = ComputeCurveLengthBetweenParameters(theCurve, first, u);
+            double normalized = (partialLength / totalLength) * (last - first) + first;
             result.emplace_back(pt, normalized);
         }
     }
     else
     {
-        // 无曲线，使用折线方式估算
-        Standard_Real totalLength = 0.0;
-        std::vector<Standard_Real> cumulativeLengths(theFitPoints.size(), 0.0);
+        double totalLength = 0.0;
+        std::vector<double> cumulativeLengths(theFitPoints.size(), 0.0);
         for (size_t i = 1; i < theFitPoints.size(); ++i)
         {
-            Standard_Real d = theFitPoints[i].Distance(theFitPoints[i - 1]);
+            double d = theFitPoints[i].DistanceTo(theFitPoints[i - 1]);
             totalLength += d;
             cumulativeLengths[i] = cumulativeLengths[i - 1] + d;
         }
 
         for (size_t i = 0; i < theFitPoints.size(); ++i)
         {
-            Standard_Real ratio = (totalLength > 0) ? cumulativeLengths[i] / totalLength : 0.0;
+            double ratio = (totalLength > 0) ? cumulativeLengths[i] / totalLength : 0.0;
             result.emplace_back(theFitPoints[i], ratio);
         }
     }
@@ -566,25 +565,23 @@ std::vector<std::pair<gp_Pnt, Standard_Real>> CurveFair::ReCalculateFitPointPara
     return result;
 }
 
-Standard_Real CurveFair::ComputeCurveLengthBetweenParameters(const Handle(Geom_BSplineCurve)& theCurve, Standard_Real theParameter1, Standard_Real theParameter2)
+double CurveFair::ComputeCurveLengthBetweenParameters(const sggk::BSplineCurve3DPtr& theCurve, double theParameter1, double theParameter2)
 {
-    GeomAdaptor_Curve adaptor(theCurve);
-    try
+    if (!theCurve) return -1.0;
+    double len = 0.0;
+    for (int i = 0; i < 30; ++i)
     {
-        Standard_Real length = CPnts_AbscissaPoint::Length(adaptor, theParameter1, theParameter2);
-        return length;
+        double u = (theParameter2 - theParameter1) * GAUSS_PTS[i] / 2.0 + (theParameter1 + theParameter2) / 2.0;
+        sggk::Vector3D d1 = theCurve->CalcDeriv1(u);
+        len += GAUSS_WTS[i] * d1.Length();
     }
-    catch (Standard_ConstructionError& e)
-    {
-        std::cerr << "Error while calculating length: " << e.GetMessageString() << std::endl;
-        return -1.0; // 错误标识
-    }
+    return len * (theParameter2 - theParameter1) / 2.0;
 }
 
-Standard_Real CurveFair::ComputeCurveLengthBetweenParameters(const Handle(Geom_BSplineCurve)& theCurve, gp_Pnt thePnt1, gp_Pnt thePnt2)
+double CurveFair::ComputeCurveLengthBetweenParameters(const sggk::BSplineCurve3DPtr& theCurve, sggk::Point3D thePnt1, sggk::Point3D thePnt2)
 {
-    Standard_Real theParameter1 = GetPntParameterOnCurve(theCurve, thePnt1);
-    Standard_Real theParameter2 = GetPntParameterOnCurve(theCurve, thePnt2);
+    double theParameter1 = GetPntParameterOnCurve(theCurve, thePnt1);
+    double theParameter2 = GetPntParameterOnCurve(theCurve, thePnt2);
 
     if (theParameter1 > theParameter2)
     {
@@ -593,116 +590,92 @@ Standard_Real CurveFair::ComputeCurveLengthBetweenParameters(const Handle(Geom_B
     return ComputeCurveLengthBetweenParameters(theCurve, theParameter1, theParameter2);
 }
 
-// 函数：根据 gp_Pnt 找到 B-Spline 曲线上的最近点参数
-Standard_Real CurveFair::GetPntParameterOnCurve(const Handle(Geom_BSplineCurve)& theCurve, const gp_Pnt& thePoint)
+double CurveFair::GetPntParameterOnCurve(const sggk::BSplineCurve3DPtr& theCurve, const sggk::Point3D& thePoint)
 {
-    // 创建投影工具
-    GeomAPI_ProjectPointOnCurve projector(thePoint, theCurve);
-
-    // 检查是否找到投影点
-    if (!projector.NbPoints())
-    {
-        std::cerr << "No projection found for the point on the curve." << std::endl;
-        return -1.0; // 错误标识
-    }
-
-    // 返回第一个最近点的参数
-    return projector.LowerDistanceParameter();
+    double param = -1.0;
+    theCurve->CalcNearestPoint(thePoint, param);
+    return param;
 }
-std::pair<std::vector<gp_Pnt>, std::vector <gp_Pnt>> CurveFair::SampleCurveWithArclengthMapping(const Handle(Geom_BSplineCurve)& theCurve,
-    const Standard_Integer nSamples)
-{
-    std::vector<gp_Pnt> originPnts;
-    std::vector<gp_Pnt> mappingPnts;
 
-    // 获取变换后的曲线
-    Handle(Geom_BSplineCurve) mappedCurve = CurveFair::GetArclengthParameterMapping(theCurve);
-    if (mappedCurve.IsNull())
+std::pair<std::vector<sggk::Point3D>, std::vector<sggk::Point3D>> CurveFair::SampleCurveWithArclengthMapping(const sggk::BSplineCurve3DPtr& theCurve,
+    const int nSamples)
+{
+    std::vector<sggk::Point3D> originPnts;
+    std::vector<sggk::Point3D> mappingPnts;
+
+    sggk::BSplineCurve3DPtr mappedCurve = CurveFair::GetArclengthParameterMapping(theCurve);
+    if (!mappedCurve)
     {
         std::cerr << "Mapping failed." << std::endl;
     }
 
-    // 原曲线参数区间
-    Standard_Real uStart = theCurve->FirstParameter();
-    Standard_Real uEnd = theCurve->LastParameter();
-    std::vector<Standard_Real> originLengths;
-    std::vector<Standard_Real> mappingLengths;
+    double uStart = theCurve->MinParam();
+    double uEnd = theCurve->MaxParam();
+    std::vector<double> originLengths;
+    std::vector<double> mappingLengths;
 
     for (int i = 0; i < nSamples; ++i)
     {
-        Standard_Real u = uStart + (uEnd - uStart) * i / (nSamples - 1);
+        double u = uStart + (uEnd - uStart) * i / (nSamples - 1);
 
         originLengths.push_back(ComputeCurveLengthBetweenParameters(m_OriginalCurve, uStart, u));
-        gp_Pnt pOriginal, pMapped;
-        theCurve->D0(u, pOriginal);  // 原始点
+        sggk::Point3D pOriginal = theCurve->CalcPoint(u);
 
-        // 获取映射后的参数值
-        Standard_Real uMapped = mappedCurve->Value(u).X();  // 假设映射为 X 坐标存储
+        double uMapped = mappedCurve->CalcPoint(u).X();
         mappingLengths.push_back(ComputeCurveLengthBetweenParameters(m_OriginalCurve, uStart, uMapped));
-        theCurve->D0(uMapped, pMapped);                     // 映射点仍在原曲线上取点
+        sggk::Point3D pMapped = theCurve->CalcPoint(uMapped);
 
         originPnts.push_back(pOriginal);
         mappingPnts.push_back(pMapped);
-
     }
     return std::make_pair(originPnts, mappingPnts);
 }
 
-
-
-
-Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurve(
-    const Handle(Geom_BSplineCurve)& theCurve,
+sggk::BSplineCurve3DPtr CurveFair::GetTempFairCurve(
+    const sggk::BSplineCurve3DPtr& theCurve,
     Eigen::MatrixXd M,
     Eigen::MatrixXd V,
     Eigen::MatrixXd& D0,
     Eigen::MatrixXd& D,
-    Standard_Real theAlpha)
+    double theAlpha)
 {
-    // 控制点的总数
-    Standard_Integer n = D0.rows();
+    int n = D0.rows();
 
-    // 固定控制点
     Eigen::Vector3d D0_start = D0.row(0);
     Eigen::Vector3d D0_end = D0.row(n - 1);
 
-    // 获取需要优化的控制点原始值
     Eigen::MatrixXd D0_internal = D0.block(1, 0, n - 2, 3);
-    Eigen::VectorXd D0_internal_x = D0.col(0).segment(1, n - 2);  // x分量
-    Eigen::VectorXd D0_internal_y = D0.col(1).segment(1, n - 2);  // y分量
-    Eigen::VectorXd D0_internal_z = D0.col(2).segment(1, n - 2);  // z分量
+    Eigen::VectorXd D0_internal_x = D0.col(0).segment(1, n - 2);
+    Eigen::VectorXd D0_internal_y = D0.col(1).segment(1, n - 2);
+    Eigen::VectorXd D0_internal_z = D0.col(2).segment(1, n - 2);
 
-    // A = α * M_internal + V_internal
-    // 获取需要优化的控制点对应的 M 矩阵和 V 矩阵
     Eigen::MatrixXd M_internal = M.block(1, 1, n - 2, n - 2);
     Eigen::MatrixXd V_internal = V.block(1, 1, n - 2, n - 2);
 
-    Standard_Integer aCompouteTimes = 0;
-    Handle(Geom_BSplineCurve) aResultCurve = nullptr;
+    int aCompouteTimes = 0;
+    sggk::BSplineCurve3DPtr aResultCurve = nullptr;
 
-    while (Standard_True)
+    while (true)
     {
         aCompouteTimes++;
         Eigen::MatrixXd A = theAlpha * M_internal + V_internal;
 
-        // 分别求解x、y、z分量
         Eigen::VectorXd b_x = Eigen::VectorXd::Zero(n - 2);
         Eigen::VectorXd b_y = Eigen::VectorXd::Zero(n - 2);
         Eigen::VectorXd b_z = Eigen::VectorXd::Zero(n - 2);
 
-        // 减去首尾控制点的影响，分别计算每个分量的b
-        for (Standard_Integer k = 0; k < n - 2; k++)
+        for (int k = 0; k < n - 2; k++)
         {
-            Standard_Real D0_term_x = M(0, k + 1) * D0_start.x();
-            Standard_Real D0_term_y = M(0, k + 1) * D0_start.y();
-            Standard_Real D0_term_z = M(0, k + 1) * D0_start.z();
-            Standard_Real Dn_term_x = M(n - 1, k + 1) * D0_end.x();
-            Standard_Real Dn_term_y = M(n - 1, k + 1) * D0_end.y();
-            Standard_Real Dn_term_z = M(n - 1, k + 1) * D0_end.z();
+            double D0_term_x = M(0, k + 1) * D0_start.x();
+            double D0_term_y = M(0, k + 1) * D0_start.y();
+            double D0_term_z = M(0, k + 1) * D0_start.z();
+            double Dn_term_x = M(n - 1, k + 1) * D0_end.x();
+            double Dn_term_y = M(n - 1, k + 1) * D0_end.y();
+            double Dn_term_z = M(n - 1, k + 1) * D0_end.z();
 
-            Standard_Real reg_term_x = V_internal(k, k) * D0_internal_x(k);
-            Standard_Real reg_term_y = V_internal(k, k) * D0_internal_y(k);
-            Standard_Real reg_term_z = V_internal(k, k) * D0_internal_z(k);
+            double reg_term_x = V_internal(k, k) * D0_internal_x(k);
+            double reg_term_y = V_internal(k, k) * D0_internal_y(k);
+            double reg_term_z = V_internal(k, k) * D0_internal_z(k);
 
             b_x(k) = -theAlpha * (D0_term_x + Dn_term_x) + reg_term_x;
             b_y(k) = -theAlpha * (D0_term_y + Dn_term_y) + reg_term_y;
@@ -720,11 +693,6 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurve(
             D_internal_y = A_pinv * b_y;
             D_internal_z = A_pinv * b_z;
         }
-        catch (const Standard_Failure& e)
-        {
-            m_errorCode.push_back(e.GetMessageString());
-            return nullptr;
-        }
         catch (const std::exception& e)
         {
             m_errorCode.push_back(e.what());
@@ -736,23 +704,19 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurve(
             return nullptr;
         }
 
-        // 合并结果
         Eigen::MatrixXd D_internal(n - 2, 3);
         D_internal.col(0) = D_internal_x;
         D_internal.col(1) = D_internal_y;
         D_internal.col(2) = D_internal_z;
 
-        // 构建最终控制点矩阵
         D = Eigen::MatrixXd::Zero(n, 3);
-        D.row(0) = D0_start;                    // 起始点
-        D.block(1, 0, n - 2, 3) = D_internal;   // 内部点
-        D.row(n - 1) = D0_end;                  // 终止点
+        D.row(0) = D0_start;
+        D.block(1, 0, n - 2, 3) = D_internal;
+        D.row(n - 1) = D0_end;
 
-        // 创建新的B样条曲线
         aResultCurve = CreateNewBSplineCurve(m_OriginalCurve, D);
 
-        // 计算新旧曲线的控制点偏差
-        Standard_Real aHausdorffDistance = 0;
+        double aHausdorffDistance = 0;
         if (m_OriginalFitPoints.size() > 0)
         {
             aHausdorffDistance = CurveFair::GetFitPointsCurveHausdorffDistance(m_FitPointParameters, aResultCurve);
@@ -772,89 +736,65 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurve(
         {
             theAlpha /= 2;
         }
-
     }
     return aResultCurve;
 }
 
 Eigen::MatrixXd CurveFair::ComputeContinuityMatrix(
-    const Handle(Geom_BSplineCurve)& theBSplineCurve,
-    const Standard_Integer p)
+    const sggk::BSplineCurve3DPtr& theBSplineCurve,
+    const int p)
 {
-    const Standard_Integer maxDerivate = 3; // C³连续
-    const Standard_Integer aNum = theBSplineCurve->NbPoles();
-    TColStd_Array1OfReal aKnots = theBSplineCurve->Knots();
-    Standard_Integer aDeg = theBSplineCurve->Degree();
-    TColStd_Array1OfReal aKnotSeq = theBSplineCurve->KnotSequence();
-    std::vector<Standard_Real> KnotSeqVector = OccArrayConvertoVector(aKnotSeq);
-    std::vector<Standard_Real> KnotVector = OccArrayConvertoVector(aKnots);
-    // 获取内部节点（排除首尾以及重复节点）
-    std::vector<Standard_Real> internalKnots(KnotVector.begin() + 1, KnotVector.end() - 1);
+    const int maxDerivate = 3;
+    const int aNum = (int)theBSplineCurve->ControlPoints().size();
+    const sggk::RealArray& aKnots = theBSplineCurve->Knots();
+    int aDeg = theBSplineCurve->Degree();
+    std::vector<double> KnotSeqVector = GetKnotSequence(theBSplineCurve);
+    std::vector<double> KnotVector = aKnots;
 
-    Standard_Integer m = internalKnots.size(); // 约束条件数量
-    Eigen::MatrixXd C(m, aNum); // 约束条件数量 , 控制点数量
+    std::vector<double> internalKnots(KnotVector.begin() + 1, KnotVector.end() - 1);
+
+    int m = (int)internalKnots.size();
+    Eigen::MatrixXd C(m, aNum);
     C.setZero();
 
-    for (Standard_Integer j = 0; j < m; ++j)
+    for (int j = 0; j < m; ++j)
     {
-        Standard_Real u_j = internalKnots[j];
-        Standard_Real s_j = f_inverse(theBSplineCurve, u_j);
-        Standard_Real Left_uj = u_j - Precision::PConfusion();
-        Standard_Real Right_uj = u_j + Precision::PConfusion();
-        // 计算 f(s) = u_j 及其导数
-        Standard_Real f0 = f(s_j, 0);   // f(s)
-        Standard_Real f1 = f(s_j, 1);   // f'(s)
-        Standard_Real f2 = f(s_j, 2);   // f''(s)
-        Standard_Real f3 = f(s_j, 3);   // f'''(s)
-        // 计算三阶导数的左右极限
-        math_Matrix leftBasis(1, maxDerivate + 1, 1, aDeg + 1);
-        math_Matrix rightBasis(1, maxDerivate + 1, 1, aDeg + 1);
-        Standard_Integer leftFirstIndex, rightFirstIndex;
+        double u_j = internalKnots[j];
+        double s_j = f_inverse(theBSplineCurve, u_j);
+        double Left_uj = u_j - 1e-7;
+        double Right_uj = u_j + 1e-7;
+        double f0 = f(s_j, 0);
+        double f1 = f(s_j, 1);
+        double f2 = f(s_j, 2);
+        double f3 = f(s_j, 3);
 
+        Eigen::MatrixXd leftBasis, rightBasis;
+        int leftFirstIndex, rightFirstIndex;
 
-        // 左极限
-        BSplCLib::EvalBsplineBasis(maxDerivate, aDeg + 1, aKnotSeq, Left_uj, leftFirstIndex, leftBasis);
+        EvalBsplineBasis(maxDerivate, aDeg, KnotSeqVector, Left_uj, leftFirstIndex, leftBasis);
+        EvalBsplineBasis(maxDerivate, aDeg, KnotSeqVector, Right_uj, rightFirstIndex, rightBasis);
 
-        // 右极限
-        BSplCLib::EvalBsplineBasis(maxDerivate, aDeg + 1, aKnotSeq, Right_uj, rightFirstIndex, rightBasis);
-
-        // 计算跳跃值
-        for (Standard_Integer localIdx = 0; localIdx < aDeg + 1; ++localIdx)
+        for (int localIdx = 0; localIdx < aDeg + 1; ++localIdx)
         {
-            Standard_Integer leftGlobalIdx = leftFirstIndex + localIdx - 1;
-            Standard_Integer rightGlobalIdx = rightFirstIndex + localIdx - 1;
+            int leftGlobalIdx = leftFirstIndex + localIdx - 1;
+            int rightGlobalIdx = rightFirstIndex + localIdx - 1;
 
-            // 确保索引有效
             if (leftGlobalIdx >= 0 && leftGlobalIdx < aNum)
             {
-                //Standard_Real d1Ni_df1 = BasisFunctionDerivative(Left_uj, leftGlobalIdx, p, 1, KnotSeqVector);
-                //Standard_Real d2Ni_df2 = BasisFunctionDerivative(Left_uj, leftGlobalIdx, p, 2, KnotSeqVector);
-                //Standard_Real d3Ni_df3 = BasisFunctionDerivative(Left_uj, leftGlobalIdx, p, 3, KnotSeqVector);
-                Standard_Real d1Ni_df1 = leftBasis(2, 1 + localIdx);
-                Standard_Real d2Ni_df2 = leftBasis(3, 1 + localIdx);
-                Standard_Real d3Ni_df3 = leftBasis(4, 1 + localIdx);
+                double d1Ni_df1 = leftBasis(1, localIdx);
+                double d2Ni_df2 = leftBasis(2, localIdx);
+                double d3Ni_df3 = leftBasis(3, localIdx);
 
-                // 计算弧长参数化链式求导的三阶导数
-                Standard_Real D1Ni_Dt1 = d1Ni_df1 * f1;
-                Standard_Real D2Ni_Dt2 = d2Ni_df2 * pow(f1, 2) + d1Ni_df1 * f2;
-                Standard_Real D3Ni_Left = d3Ni_df3 * pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
+                double D3Ni_Left = d3Ni_df3 * std::pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
                 C(j, leftGlobalIdx) += D3Ni_Left;
             }
             if (rightGlobalIdx >= 0 && rightGlobalIdx < aNum)
             {
-                //Standard_Real d1Ni_df1 = BasisFunctionDerivative(Right_uj, rightGlobalIdx, p, 1, KnotSeqVector);
-                //Standard_Real d2Ni_df2 = BasisFunctionDerivative(Right_uj, rightGlobalIdx, p, 2, KnotSeqVector);
-                //Standard_Real d3Ni_df3 = BasisFunctionDerivative(Right_uj, rightGlobalIdx, p, 3, KnotSeqVector);
+                double d1Ni_df1 = rightBasis(1, localIdx);
+                double d2Ni_df2 = rightBasis(2, localIdx);
+                double d3Ni_df3 = rightBasis(3, localIdx);
 
-                Standard_Real d1Ni_df1 = rightBasis(2, 1 + localIdx);
-                Standard_Real d2Ni_df2 = rightBasis(3, 1 + localIdx);
-                Standard_Real d3Ni_df3 = rightBasis(4, 1 + localIdx);
-
-
-                // 计算弧长参数化链式求导的三阶导数
-                Standard_Real D1Ni_Dt1 = d1Ni_df1 * f1;
-                Standard_Real D2Ni_Dt2 = d2Ni_df2 * pow(f1, 2) + d1Ni_df1 * f2;
-                Standard_Real D3Ni_Right = d3Ni_df3 * pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
+                double D3Ni_Right = d3Ni_df3 * std::pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
                 C(j, rightGlobalIdx) -= D3Ni_Right;
             }
         }
@@ -862,83 +802,57 @@ Eigen::MatrixXd CurveFair::ComputeContinuityMatrix(
     return C;
 }
 
-// 非并行处理
 Eigen::MatrixXd CurveFair::ComputeEnergyMatrix(
-    const Handle(Geom_BSplineCurve)& theBSplineCurve,
-    const Standard_Integer p,
-    const Standard_Real tol)
+    const sggk::BSplineCurve3DPtr& theBSplineCurve,
+    const int p,
+    const double tol)
 {
-    m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve); // 计算f(t)
-    const Standard_Integer maxDerivate = 3;
-    const Standard_Integer aGaussNum = 30;
-    Standard_Integer aNum = theBSplineCurve->NbPoles();
-    TColStd_Array1OfReal aKnots = theBSplineCurve->Knots();
-    Standard_Integer aDeg = theBSplineCurve->Degree();
-    TColStd_Array1OfReal aKnotSeq = theBSplineCurve->KnotSequence();
-    math_Vector aGaussPnts(1, aGaussNum);
-    math_Vector aGausssWeights(1, aGaussNum);
-    math::GaussPoints(aGaussNum, aGaussPnts);
-    math::GaussWeights(aGaussNum, aGausssWeights);
-    std::vector<Standard_Real> aKnotVector = OccArrayConvertoVector(aKnots);
-    std::vector<Standard_Real> aKnotSeqVector = OccArrayConvertoVector(aKnotSeq);
+    m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve);
+    const int maxDerivate = 3;
+    const int aGaussNum = 30;
+    int aNum = (int)theBSplineCurve->ControlPoints().size();
+    const sggk::RealArray& aKnots = theBSplineCurve->Knots();
+    int aDeg = theBSplineCurve->Degree();
+    std::vector<double> aKnotSeqVector = GetKnotSequence(theBSplineCurve);
+    std::vector<double> aKnotVector = aKnots;
     Eigen::MatrixXd M(aNum, aNum);
     M.setZero();
 
-    for (Standard_Integer i = aKnots.Lower(); i < aKnots.Upper(); ++i)
+    for (size_t i = 0; i + 1 < aKnots.size(); ++i)
     {
-        Standard_Real sStart = f_inverse(theBSplineCurve, aKnots[i]);
-        Standard_Real sEnd = f_inverse(theBSplineCurve, aKnots[i + 1]);
-        //将各段的两个高斯积分点相加
-        for (Standard_Integer GaussIndex = 0; GaussIndex < aGaussNum; ++GaussIndex)
+        double sStart = f_inverse(theBSplineCurve, aKnots[i]);
+        double sEnd = f_inverse(theBSplineCurve, aKnots[i + 1]);
+        for (int GaussIndex = 0; GaussIndex < aGaussNum; ++GaussIndex)
         {
-            Standard_Real s = (sEnd - sStart) * aGaussPnts(aGaussNum - GaussIndex) / 2.0 + (sStart + sEnd) / 2.0;
-            Standard_Integer aFirstIndex;
-            math_Matrix aBsplineBasis(1, maxDerivate + 1, 1, aDeg + 1);
-            BSplCLib::EvalBsplineBasis(maxDerivate, aDeg + 1, aKnotSeq, f(s), aFirstIndex, aBsplineBasis);
+            double s = (sEnd - sStart) * GAUSS_PTS[GaussIndex] / 2.0 + (sStart + sEnd) / 2.0;
+            int aFirstIndex;
+            Eigen::MatrixXd aBsplineBasis;
+            EvalBsplineBasis(maxDerivate, aDeg, aKnotSeqVector, f(s), aFirstIndex, aBsplineBasis);
 
-            // 计算f(t)及其导数
-            Standard_Real f0 = f(s, 0);   // f(t)
-            Standard_Real f1 = f(s, 1);   // f'(t)
-            Standard_Real f2 = f(s, 2);   // f''(t)
-            Standard_Real f3 = f(s, 3);   // f'''(t)
-            for (Standard_Integer m = 0; m < aDeg + 1; ++m)
+            double f0 = f(s, 0);
+            double f1 = f(s, 1);
+            double f2 = f(s, 2);
+            double f3 = f(s, 3);
+            for (int m = 0; m < aDeg + 1; ++m)
             {
-                Standard_Integer globalI = m + aFirstIndex - 1;
-                // 弧长参数化 k 阶导数 参数 f(t)
-                //Standard_Real d1Ni_df1 = BasisFunctionDerivative(f0, globalI, p, 1, aKnotSeqVector);
-                //Standard_Real d2Ni_df2 = BasisFunctionDerivative(f0, globalI, p, 2, aKnotSeqVector);
-                //Standard_Real d3Ni_df3 = BasisFunctionDerivative(f0, globalI, p, 3, aKnotSeqVector);
-                Standard_Real d1Ni_df1 = aBsplineBasis(2, 1 + m);
-                Standard_Real d2Ni_df2 = aBsplineBasis(3, 1 + m);
-                Standard_Real d3Ni_df3 = aBsplineBasis(4, 1 + m);
+                int globalI = m + aFirstIndex - 1;
+                double d1Ni_df1 = aBsplineBasis(1, m);
+                double d2Ni_df2 = aBsplineBasis(2, m);
+                double d3Ni_df3 = aBsplineBasis(3, m);
 
-                // 计算弧长参数化链式求导的三阶导数
-                Standard_Real D1Ni_Dt1 = d1Ni_df1 * f1;
-                Standard_Real D2Ni_Dt2 = d2Ni_df2 * pow(f1, 2) + d1Ni_df1 * f2;
-                Standard_Real D3Ni_Dt3 = d3Ni_df3 * pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
+                double D3Ni_Dt3 = d3Ni_df3 * std::pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
 
-                for (Standard_Integer n = 0; n < aDeg + 1; ++n)
+                for (int n = 0; n < aDeg + 1; ++n)
                 {
-                    Standard_Integer globalJ = n + aFirstIndex - 1;
-                    // 弧长参数化 k 阶导数 参数 f(t)
-                    //Standard_Real d1Nj_df1 = BasisFunctionDerivative(f0, globalJ, p, 1, aKnotSeqVector);
-                    //Standard_Real d2Nj_df2 = BasisFunctionDerivative(f0, globalJ, p, 2, aKnotSeqVector);
-                    //Standard_Real d3Nj_df3 = BasisFunctionDerivative(f0, globalJ, p, 3, aKnotSeqVector);
-                    Standard_Real d1Nj_df1 = aBsplineBasis(2, 1 + n);
-                    Standard_Real d2Nj_df2 = aBsplineBasis(3, 1 + n);
-                    Standard_Real d3Nj_df3 = aBsplineBasis(4, 1 + n);
-                    // 计算弧长参数化链式求导的三阶导数
-                    Standard_Real D1Nj_Dt1 = d1Nj_df1 * f1;
-                    Standard_Real D2Nj_Dt2 = d2Nj_df2 * pow(f1, 2) + d1Nj_df1 * f2;
-                    Standard_Real D3Nj_Dt3 = d3Nj_df3 * pow(f1, 3) + 3 * d2Nj_df2 * f1 * f2 + d1Nj_df1 * f3;
+                    int globalJ = n + aFirstIndex - 1;
+                    double d1Nj_df1 = aBsplineBasis(1, n);
+                    double d2Nj_df2 = aBsplineBasis(2, n);
+                    double d3Nj_df3 = aBsplineBasis(3, n);
 
-                    // 弧长参数化三阶导数
-                    Standard_Real aElement =
-                        D3Ni_Dt3 *
-                        D3Nj_Dt3 *
-                        aGausssWeights(aGaussNum - GaussIndex) * (sEnd - sStart) / 2.0;
+                    double D3Nj_Dt3 = d3Nj_df3 * std::pow(f1, 3) + 3 * d2Nj_df2 * f1 * f2 + d1Nj_df1 * f3;
+
+                    double aElement = D3Ni_Dt3 * D3Nj_Dt3 * GAUSS_WTS[GaussIndex] * (sEnd - sStart) / 2.0;
                     M(globalI, globalJ) += aElement;
-
                 }
             }
         }
@@ -946,209 +860,95 @@ Eigen::MatrixXd CurveFair::ComputeEnergyMatrix(
     return M;
 }
 
-/*
-Eigen::MatrixXd CurveFair::ComputeEnergyMatrix(
-    const Handle(Geom_BSplineCurve)& theBSplineCurve,
-    const Standard_Integer p,
-    const Standard_Real theTolerance)
+Eigen::SparseMatrix<double> CurveFair::ComputeSparseEnergyMatrix(
+    const sggk::BSplineCurve3DPtr& theBSplineCurve,
+    const int p,
+    const double theTolerance)
 {
     m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve);
-    const Standard_Integer maxDerivate = 3;
-    const Standard_Integer aGaussNum = 30;
-    Standard_Integer aNum = theBSplineCurve->NbPoles();
-    TColStd_Array1OfReal aKnots = theBSplineCurve->Knots();
-    Standard_Integer aDeg = theBSplineCurve->Degree();
-    TColStd_Array1OfReal aKnotSeq = theBSplineCurve->KnotSequence();
+    const int maxDerivate = 3;
+    const int aGaussNum = 30;
+    int aNum = (int)theBSplineCurve->ControlPoints().size();
+    const sggk::RealArray& aKnots = theBSplineCurve->Knots();
+    int aDeg = theBSplineCurve->Degree();
+    std::vector<double> aKnotSeqVector = GetKnotSequence(theBSplineCurve);
 
-    math_Vector aGaussPnts(1, aGaussNum);
-    math_Vector aGausssWeights(1, aGaussNum);
-    math::GaussPoints(aGaussNum, aGaussPnts);
-    math::GaussWeights(aGaussNum, aGausssWeights);
+    std::vector<Eigen::Triplet<double>> triplets;
 
-    std::vector<Standard_Real> aKnotSeqVector = OccArrayConvertoVector(aKnotSeq);
-
-    Eigen::MatrixXd M = Eigen::MatrixXd::Zero(aNum, aNum);
-
-    // 并行处理每一段
-#pragma omp parallel for schedule(dynamic)
-    for (Standard_Integer i = aKnots.Lower(); i < aKnots.Upper(); ++i)
+    for (size_t i = 0; i + 1 < aKnots.size(); ++i)
     {
-        Eigen::MatrixXd M_local = Eigen::MatrixXd::Zero(aNum, aNum); // 每线程局部累加
+        double sStart = f_inverse(theBSplineCurve, aKnots[i]);
+        double sEnd = f_inverse(theBSplineCurve, aKnots[i + 1]);
 
-        Standard_Real sStart = f_inverse(theBSplineCurve, aKnots[i]);
-        Standard_Real sEnd = f_inverse(theBSplineCurve, aKnots[i + 1]);
-
-        for (Standard_Integer GaussIndex = 0; GaussIndex < aGaussNum; ++GaussIndex)
+        for (int GaussIndex = 0; GaussIndex < aGaussNum; ++GaussIndex)
         {
-            Standard_Real s = (sEnd - sStart) * aGaussPnts(aGaussNum - GaussIndex) / 2.0
-                + (sStart + sEnd) / 2.0;
+            double s = (sEnd - sStart) * GAUSS_PTS[GaussIndex] / 2.0 + (sStart + sEnd) / 2.0;
 
-            Standard_Integer aFirstIndex;
-            math_Matrix aBsplineBasis(1, maxDerivate + 1, 1, aDeg + 1);
-            BSplCLib::EvalBsplineBasis(maxDerivate, aDeg + 1, aKnotSeq, f(s), aFirstIndex, aBsplineBasis);
+            int aFirstIndex;
+            Eigen::MatrixXd aBsplineBasis;
+            EvalBsplineBasis(maxDerivate, aDeg, aKnotSeqVector, f(s), aFirstIndex, aBsplineBasis);
 
-            Standard_Real f0 = f(s, 0);
-            Standard_Real f1 = f(s, 1);
-            Standard_Real f2 = f(s, 2);
-            Standard_Real f3 = f(s, 3);
+            double f1 = f(s, 1);
+            double f2 = f(s, 2);
+            double f3 = f(s, 3);
 
-            for (Standard_Integer m = 0; m < aDeg + 1; ++m)
+            for (int m = 0; m < aDeg + 1; ++m)
             {
-                Standard_Integer globalI = m + aFirstIndex - 1;
+                int globalI = m + aFirstIndex - 1;
+                double d1Ni_df1 = aBsplineBasis(1, m);
+                double d2Ni_df2 = aBsplineBasis(2, m);
+                double d3Ni_df3 = aBsplineBasis(3, m);
 
-                Standard_Real d1Ni_df1 = aBsplineBasis(2, 1 + m);
-                Standard_Real d2Ni_df2 = aBsplineBasis(3, 1 + m);
-                Standard_Real d3Ni_df3 = aBsplineBasis(4, 1 + m);
+                double D3Ni_Dt3 = d3Ni_df3 * std::pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
 
-                Standard_Real D1Ni_Dt1 = d1Ni_df1 * f1;
-                Standard_Real D2Ni_Dt2 = d2Ni_df2 * pow(f1, 2) + d1Ni_df1 * f2;
-                Standard_Real D3Ni_Dt3 = d3Ni_df3 * pow(f1, 3) + 3 * d2Ni_df2 * f1 * f2 + d1Ni_df1 * f3;
-
-                for (Standard_Integer n = 0; n < aDeg + 1; ++n)
+                for (int n = 0; n < aDeg + 1; ++n)
                 {
-                    Standard_Integer globalJ = n + aFirstIndex - 1;
+                    int globalJ = n + aFirstIndex - 1;
+                    double d1Nj_df1 = aBsplineBasis(1, n);
+                    double d2Nj_df2 = aBsplineBasis(2, n);
+                    double d3Nj_df3 = aBsplineBasis(3, n);
 
-                    Standard_Real d1Nj_df1 = aBsplineBasis(2, 1 + n);
-                    Standard_Real d2Nj_df2 = aBsplineBasis(3, 1 + n);
-                    Standard_Real d3Nj_df3 = aBsplineBasis(4, 1 + n);
+                    double D3Nj_Dt3 = d3Nj_df3 * std::pow(f1, 3) + 3 * d2Nj_df2 * f1 * f2 + d1Nj_df1 * f3;
 
-                    Standard_Real D1Nj_Dt1 = d1Nj_df1 * f1;
-                    Standard_Real D2Nj_Dt2 = d2Nj_df2 * pow(f1, 2) + d1Nj_df1 * f2;
-                    Standard_Real D3Nj_Dt3 = d3Nj_df3 * pow(f1, 3) + 3 * d2Nj_df2 * f1 * f2 + d1Nj_df1 * f3;
+                    double aElement = D3Ni_Dt3 * D3Nj_Dt3 * GAUSS_WTS[GaussIndex] * (sEnd - sStart) / 2.0;
 
-                    Standard_Real aElement = D3Ni_Dt3 * D3Nj_Dt3 * aGausssWeights(aGaussNum - GaussIndex) * (sEnd - sStart) / 2.0;
-                    M_local(globalI, globalJ) += aElement;
+                    if (std::abs(aElement) > theTolerance)
+                        triplets.emplace_back(globalI, globalJ, aElement);
                 }
             }
         }
-
-        // 合并线程局部矩阵
-#pragma omp critical
-        M += M_local;
     }
 
-    return M;
-}
-*/
-
-Eigen::SparseMatrix<Standard_Real> CurveFair::ComputeSparseEnergyMatrix(
-    const Handle(Geom_BSplineCurve)& theBSplineCurve,
-    const Standard_Integer p,
-    const Standard_Real theTolerance)
-{
-    m_ArcLengthMappingFunction = GetArclengthParameterMapping(theBSplineCurve);
-    const Standard_Integer maxDerivate = 3;
-    const Standard_Integer aGaussNum = 30;
-    Standard_Integer aNum = theBSplineCurve->NbPoles();
-    TColStd_Array1OfReal aKnots = theBSplineCurve->Knots();
-    Standard_Integer aDeg = theBSplineCurve->Degree();
-    TColStd_Array1OfReal aKnotSeq = theBSplineCurve->KnotSequence();
-
-    math_Vector aGaussPnts(1, aGaussNum);
-    math_Vector aGausssWeights(1, aGaussNum);
-    math::GaussPoints(aGaussNum, aGaussPnts);
-    math::GaussWeights(aGaussNum, aGausssWeights);
-
-    std::vector<Standard_Real> aKnotSeqVector = OccArrayConvertoVector(aKnotSeq);
-
-    // 最终收集所有非零项
-    std::vector<Eigen::Triplet<Standard_Real>> triplets;
-
-    {
-        std::vector<Eigen::Triplet<Standard_Real>> local_triplets;
-
-
-        for (Standard_Integer i = aKnots.Lower(); i < aKnots.Upper(); ++i)
-        {
-            Standard_Real sStart = f_inverse(theBSplineCurve, aKnots[i]);
-            Standard_Real sEnd = f_inverse(theBSplineCurve, aKnots[i + 1]);
-
-            for (Standard_Integer GaussIndex = 0; GaussIndex < aGaussNum; ++GaussIndex)
-            {
-                Standard_Real s = (sEnd - sStart) * aGaussPnts(aGaussNum - GaussIndex) / 2.0
-                    + (sStart + sEnd) / 2.0;
-
-                Standard_Integer aFirstIndex;
-                math_Matrix aBsplineBasis(1, maxDerivate + 1, 1, aDeg + 1);
-                BSplCLib::EvalBsplineBasis(maxDerivate, aDeg + 1, aKnotSeq, f(s), aFirstIndex, aBsplineBasis);
-
-                Standard_Real f1 = f(s, 1);
-                Standard_Real f2 = f(s, 2);
-                Standard_Real f3 = f(s, 3);
-
-                for (Standard_Integer m = 0; m < aDeg + 1; ++m)
-                {
-                    Standard_Integer globalI = m + aFirstIndex - 1;
-                    Standard_Real d1Ni_df1 = aBsplineBasis(2, 1 + m);
-                    Standard_Real d2Ni_df2 = aBsplineBasis(3, 1 + m);
-                    Standard_Real d3Ni_df3 = aBsplineBasis(4, 1 + m);
-
-                    Standard_Real D3Ni_Dt3 = d3Ni_df3 * pow(f1, 3)
-                        + 3 * d2Ni_df2 * f1 * f2
-                        + d1Ni_df1 * f3;
-
-                    for (Standard_Integer n = 0; n < aDeg + 1; ++n)
-                    {
-                        Standard_Integer globalJ = n + aFirstIndex - 1;
-                        Standard_Real d1Nj_df1 = aBsplineBasis(2, 1 + n);
-                        Standard_Real d2Nj_df2 = aBsplineBasis(3, 1 + n);
-                        Standard_Real d3Nj_df3 = aBsplineBasis(4, 1 + n);
-
-                        Standard_Real D3Nj_Dt3 = d3Nj_df3 * pow(f1, 3)
-                            + 3 * d2Nj_df2 * f1 * f2
-                            + d1Nj_df1 * f3;
-
-                        Standard_Real aElement = D3Ni_Dt3 * D3Nj_Dt3
-                            * aGausssWeights(aGaussNum - GaussIndex)
-                            * (sEnd - sStart) / 2.0;
-
-                        if (std::abs(aElement) > theTolerance)
-                            local_triplets.emplace_back(globalI, globalJ, aElement);
-                    }
-                }
-            }
-        }
-
-
-        triplets.insert(triplets.end(), local_triplets.begin(), local_triplets.end());
-    }
-
-    Eigen::SparseMatrix<Standard_Real> M(aNum, aNum);
+    Eigen::SparseMatrix<double> M(aNum, aNum);
     M.setFromTriplets(triplets.begin(), triplets.end());
-
     return M;
 }
 
-Standard_Real CurveFair::ComputeCurveFairEnergy(const Handle(Geom_BSplineCurve)& theCurve)
+double CurveFair::ComputeCurveFairEnergy(const sggk::BSplineCurve3DPtr& theCurve)
 {
-    const TColgp_Array1OfPnt& Poles = theCurve->Poles();
-    const Standard_Integer aNumPoles = theCurve->NbPoles();
+    const sggk::Point3DArray& Poles = theCurve->ControlPoints();
+    const int aNumPoles = (int)Poles.size();
 
-    Eigen::MatrixXd M = ComputeEnergyMatrix(theCurve, 3); // 返回 M = CᵀC
+    Eigen::MatrixXd M = ComputeEnergyMatrix(theCurve, 3);
     std::cout << M << std::endl;
     Eigen::MatrixXd P(aNumPoles, 3);
-    for (Standard_Integer i = Poles.Lower(); i <= Poles.Upper(); ++i)
+    for (int i = 0; i < aNumPoles; ++i)
     {
-        const gp_Pnt& pt = Poles(i);
-        P(i - Poles.Lower(), 0) = pt.X();
-        P(i - Poles.Lower(), 1) = pt.Y();
-        P(i - Poles.Lower(), 2) = pt.Z();
+        P(i, 0) = Poles[i].X();
+        P(i, 1) = Poles[i].Y();
+        P(i, 2) = Poles[i].Z();
     }
 
-    // 能量 = trace(P^T * M * P)
     return (P.transpose() * M * P).trace();
 }
-
 
 Eigen::MatrixXd CurveFair::ComputeConstraintMatrix(
     const Eigen::MatrixXd& theD0,
     Eigen::VectorXd& theH)
 {
-    Standard_Integer n = theD0.rows();
-    Standard_Integer num_unknowns = n - 2;
+    int n = theD0.rows();
+    int num_unknowns = n - 2;
 
-    // C 矩阵的尺寸为 4 x (3 * (n-2))，因为有4个约束方程，
-    // 未知量为 n-2 个点的 x,y,z 共 3*(n-2) 个变量。
     Eigen::MatrixXd C = Eigen::MatrixXd::Zero(4, 3 * num_unknowns);
     theH = Eigen::VectorXd::Zero(4);
 
@@ -1157,47 +957,36 @@ Eigen::MatrixXd CurveFair::ComputeConstraintMatrix(
         return C;
     }
 
-    // 提取首尾控制点
     Eigen::Vector3d P0 = theD0.row(0);
     Eigen::Vector3d P1 = theD0.row(1);
     Eigen::Vector3d Pn_1 = theD0.row(n - 2);
     Eigen::Vector3d Pn = theD0.row(n - 1);
 
-    // --- 起始点切向约束 (P1 - P0) · u = 0 ---
     Eigen::Vector3d T_start_0 = P1 - P0;
-    if (T_start_0.norm() > 1e-9) // 避免切向为零向量
+    if (T_start_0.norm() > 1e-9)
     {
-        // 寻找与 T_start_0 正交的两个单位向量 u1, u2
-        Eigen::Vector3d v_arb = (abs(T_start_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
+        Eigen::Vector3d v_arb = (std::abs(T_start_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
         Eigen::Vector3d u1 = T_start_0.cross(v_arb).normalized();
         Eigen::Vector3d u2 = T_start_0.cross(u1).normalized();
 
-        // 填充 C 矩阵的第一行和第二行 (对应 P1)
-        // P1 是未知点的第 0 个
         C(0, 0) = u1.x(); C(0, num_unknowns) = u1.y(); C(0, 2 * num_unknowns) = u1.z();
         C(1, 0) = u2.x(); C(1, num_unknowns) = u2.y(); C(1, 2 * num_unknowns) = u2.z();
 
-        // 填充 h 向量的前两个元素
         theH(0) = P0.dot(u1);
         theH(1) = P0.dot(u2);
     }
 
-    // --- 终止点切向约束 (Pn - Pn-1) · v = 0 ---
     Eigen::Vector3d T_end_0 = Pn - Pn_1;
-    if (T_end_0.norm() > 1e-9) // 避免切向为零向量
+    if (T_end_0.norm() > 1e-9)
     {
-        // 寻找与 T_end_0 正交的两个单位向量 v1, v2
-        Eigen::Vector3d v_arb = (abs(T_end_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
+        Eigen::Vector3d v_arb = (std::abs(T_end_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
         Eigen::Vector3d v1 = T_end_0.cross(v_arb).normalized();
         Eigen::Vector3d v2 = T_end_0.cross(v1).normalized();
 
-        // 填充 C 矩阵的第三行和第四行 (对应 Pn-1)
-        // Pn-1 是未知点的第 (num_unknowns - 1) 个
-        Standard_Integer last_idx = num_unknowns - 1;
+        int last_idx = num_unknowns - 1;
         C(2, last_idx) = -v1.x(); C(2, last_idx + num_unknowns) = -v1.y(); C(2, last_idx + 2 * num_unknowns) = -v1.z();
         C(3, last_idx) = -v2.x(); C(3, last_idx + num_unknowns) = -v2.y(); C(3, last_idx + 2 * num_unknowns) = -v2.z();
 
-        // 填充 h 向量的后两个元素
         theH(2) = -Pn.dot(v1);
         theH(3) = -Pn.dot(v2);
     }
@@ -1205,14 +994,14 @@ Eigen::MatrixXd CurveFair::ComputeConstraintMatrix(
     return C;
 }
 
-Eigen::SparseMatrix<Standard_Real> CurveFair::ComputeSparseConstraintMatrix(
+Eigen::SparseMatrix<double> CurveFair::ComputeSparseConstraintMatrix(
     const Eigen::MatrixXd& theD0,
     Eigen::VectorXd& theH)
 {
-    Standard_Integer n = theD0.rows();
-    Standard_Integer num_unknowns = n - 2;
+    int n = theD0.rows();
+    int num_unknowns = n - 2;
 
-    Eigen::SparseMatrix<Standard_Real> C(4, 3 * num_unknowns);
+    Eigen::SparseMatrix<double> C(4, 3 * num_unknowns);
     theH = Eigen::VectorXd::Zero(4);
 
     if (num_unknowns <= 0)
@@ -1220,32 +1009,25 @@ Eigen::SparseMatrix<Standard_Real> CurveFair::ComputeSparseConstraintMatrix(
         return C;
     }
 
-    std::vector<Eigen::Triplet<Standard_Real>> triplets;
-    triplets.reserve(12); // 每行最多 3 个非零，总共 4 行
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(12);
 
-    // 提取首尾控制点
     Eigen::Vector3d P0 = theD0.row(0);
     Eigen::Vector3d P1 = theD0.row(1);
     Eigen::Vector3d Pn_1 = theD0.row(n - 2);
     Eigen::Vector3d Pn = theD0.row(n - 1);
 
-    // 起始点切向约束
     Eigen::Vector3d T_start_0 = P1 - P0;
     if (T_start_0.norm() > 1e-9)
     {
-        Eigen::Vector3d v_arb = (std::abs(T_start_0.x()) < 0.9)
-            ? Eigen::Vector3d(1, 0, 0)
-            : Eigen::Vector3d(0, 1, 0);
-
+        Eigen::Vector3d v_arb = (std::abs(T_start_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
         Eigen::Vector3d u1 = T_start_0.cross(v_arb).normalized();
         Eigen::Vector3d u2 = T_start_0.cross(u1).normalized();
 
-        // 行 0
         triplets.emplace_back(0, 0, u1.x());
         triplets.emplace_back(0, num_unknowns, u1.y());
         triplets.emplace_back(0, 2 * num_unknowns, u1.z());
 
-        // 行 1
         triplets.emplace_back(1, 0, u2.x());
         triplets.emplace_back(1, num_unknowns, u2.y());
         triplets.emplace_back(1, 2 * num_unknowns, u2.z());
@@ -1254,25 +1036,19 @@ Eigen::SparseMatrix<Standard_Real> CurveFair::ComputeSparseConstraintMatrix(
         theH(1) = P0.dot(u2);
     }
 
-    // 终止点切向约束
     Eigen::Vector3d T_end_0 = Pn - Pn_1;
     if (T_end_0.norm() > 1e-9)
     {
-        Eigen::Vector3d v_arb = (std::abs(T_end_0.x()) < 0.9)
-            ? Eigen::Vector3d(1, 0, 0)
-            : Eigen::Vector3d(0, 1, 0);
-
+        Eigen::Vector3d v_arb = (std::abs(T_end_0.x()) < 0.9) ? Eigen::Vector3d(1, 0, 0) : Eigen::Vector3d(0, 1, 0);
         Eigen::Vector3d v1 = T_end_0.cross(v_arb).normalized();
         Eigen::Vector3d v2 = T_end_0.cross(v1).normalized();
 
-        Standard_Integer last_idx = num_unknowns - 1;
+        int last_idx = num_unknowns - 1;
 
-        // 行 2
         triplets.emplace_back(2, last_idx, -v1.x());
         triplets.emplace_back(2, last_idx + num_unknowns, -v1.y());
         triplets.emplace_back(2, last_idx + 2 * num_unknowns, -v1.z());
 
-        // 行 3
         triplets.emplace_back(3, last_idx, -v2.x());
         triplets.emplace_back(3, last_idx + num_unknowns, -v2.y());
         triplets.emplace_back(3, last_idx + 2 * num_unknowns, -v2.z());
@@ -1285,170 +1061,18 @@ Eigen::SparseMatrix<Standard_Real> CurveFair::ComputeSparseConstraintMatrix(
     return C;
 }
 
-//// 普通矩阵求解
-//Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
-//    const Handle(Geom_BSplineCurve)& theCurve,
-//    Eigen::MatrixXd M,
-//    Eigen::MatrixXd V,
-//    Eigen::MatrixXd& D0,
-//    Eigen::MatrixXd& D,
-//    Standard_Real theAlpha)
-//{
-//    // 控制点的总数
-//    Standard_Integer n = D0.rows();
-//    if (n <= 2) return Handle(Geom_BSplineCurve)(); // 无法优化
-//
-//    Standard_Integer num_unknowns = n - 2;
-//
-//    // 固定控制点
-//    Eigen::Vector3d D0_start = D0.row(0);
-//    Eigen::Vector3d D0_end = D0.row(n - 1);
-//
-//    // 获取需要优化的控制点原始值 (x, y, z 分量)
-//    Eigen::VectorXd D0_internal_x = D0.col(0).segment(1, num_unknowns);
-//    Eigen::VectorXd D0_internal_y = D0.col(1).segment(1, num_unknowns);
-//    Eigen::VectorXd D0_internal_z = D0.col(2).segment(1, num_unknowns);
-//
-//    // 获取 M 和 V 的内部块
-//    Eigen::MatrixXd M_internal = M.block(1, 1, num_unknowns, num_unknowns);
-//    Eigen::MatrixXd V_internal = V.block(1, 1, num_unknowns, num_unknowns);
-//
-//    Standard_Real average = M_internal.sum() / (M_internal.rows() * M_internal.cols());
-//    //std::cout << M_internal << std::endl;
-//    //std::cout << V_internal << std::endl;
-//    // --- 新增：调用函数计算约束矩阵 C 和右端项 h ---
-//    Eigen::VectorXd h;
-//    Eigen::MatrixXd C_mat = ComputeConstraintMatrix(D0, h);
-//
-//
-//    Standard_Integer aCompouteTimes = 0;
-//    Handle(Geom_BSplineCurve) aResultCurve = nullptr;
-//
-//    while (Standard_True)
-//    {
-//        aCompouteTimes++;
-//
-//        // --- 构建大型线性系统 [BigA  C^T] [ X ] = [ BigB ] ---
-//        //                       [ C     0  ] [ λ ]   [   h  ]
-//
-//        // 1. 构建系数矩阵 A (对x,y,z分量相同)
-//        Eigen::MatrixXd A = theAlpha * M_internal + V_internal;
-//
-//        // 2. 构建右端项 b (分x,y,z)
-//        Eigen::VectorXd b_x = Eigen::VectorXd::Zero(num_unknowns);
-//        Eigen::VectorXd b_y = Eigen::VectorXd::Zero(num_unknowns);
-//        Eigen::VectorXd b_z = Eigen::VectorXd::Zero(num_unknowns);
-//        for (Standard_Integer k = 0; k < num_unknowns; k++)
-//        {
-//            Standard_Real D0_term_x = M(0, k + 1) * D0_start.x();
-//            Standard_Real Dn_term_x = M(n - 1, k + 1) * D0_end.x();
-//            Standard_Real reg_term_x = V_internal(k, k) * D0_internal_x(k);
-//            b_x(k) = -theAlpha * (D0_term_x + Dn_term_x) + reg_term_x;
-//
-//            Standard_Real D0_term_y = M(0, k + 1) * D0_start.y();
-//            Standard_Real Dn_term_y = M(n - 1, k + 1) * D0_end.y();
-//            Standard_Real reg_term_y = V_internal(k, k) * D0_internal_y(k);
-//            b_y(k) = -theAlpha * (D0_term_y + Dn_term_y) + reg_term_y;
-//
-//            Standard_Real D0_term_z = M(0, k + 1) * D0_start.z();
-//            Standard_Real Dn_term_z = M(n - 1, k + 1) * D0_end.z();
-//            Standard_Real reg_term_z = V_internal(k, k) * D0_internal_z(k);
-//            b_z(k) = -theAlpha * (D0_term_z + Dn_term_z) + reg_term_z;
-//        }
-//
-//        // 3. 组装大型系统的左端矩阵 (LHS) 和右端向量 (RHS)
-//        Standard_Integer total_vars = 3 * num_unknowns;
-//        Standard_Integer system_size = total_vars + 4; // 4个拉格朗日乘子
-//        Eigen::MatrixXd BigLHS = Eigen::MatrixXd::Zero(system_size, system_size);
-//        Eigen::VectorXd BigRHS = Eigen::VectorXd::Zero(system_size);
-//
-//        // 填充对角块 A
-//        BigLHS.block(0, 0, num_unknowns, num_unknowns) = A;
-//        BigLHS.block(num_unknowns, num_unknowns, num_unknowns, num_unknowns) = A;
-//        BigLHS.block(2 * num_unknowns, 2 * num_unknowns, num_unknowns, num_unknowns) = A;
-//
-//        // 填充约束块 C 和 C^T
-//        BigLHS.block(total_vars, 0, 4, total_vars) = C_mat;
-//        BigLHS.block(0, total_vars, total_vars, 4) = C_mat.transpose();
-//
-//        // 填充右端项
-//        BigRHS.segment(0, num_unknowns) = b_x;
-//        BigRHS.segment(num_unknowns, num_unknowns) = b_y;
-//        BigRHS.segment(2 * num_unknowns, num_unknowns) = b_z;
-//        BigRHS.segment(total_vars, 4) = h;
-//
-//        Eigen::VectorXd D_internal_x, D_internal_y, D_internal_z;
-//
-//        try
-//        {
-//            // 4. 求解大型线性系统
-//            Eigen::JacobiSVD<Eigen::MatrixXd> svd(BigLHS, Eigen::ComputeThinU | Eigen::ComputeThinV);
-//            Eigen::VectorXd solution = svd.solve(BigRHS);
-//
-//            // 5. 从解中提取各分量
-//            D_internal_x = solution.segment(0, num_unknowns);
-//            D_internal_y = solution.segment(num_unknowns, num_unknowns);
-//            D_internal_z = solution.segment(2 * num_unknowns, num_unknowns);
-//        }
-//        catch (...)
-//        {
-//            m_errorCode.push_back("Exception occurred during solving constrained system!");
-//            return nullptr;
-//        }
-//
-//        // 合并结果
-//        Eigen::MatrixXd D_internal(num_unknowns, 3);
-//        D_internal.col(0) = D_internal_x;
-//        D_internal.col(1) = D_internal_y;
-//        D_internal.col(2) = D_internal_z;
-//
-//        // 构建最终控制点矩阵
-//        D = Eigen::MatrixXd::Zero(n, 3);
-//        D.row(0) = D0_start;
-//        D.block(1, 0, num_unknowns, 3) = D_internal;
-//        D.row(n - 1) = D0_end;
-//
-//        // 创建新的B样条曲线
-//        aResultCurve = CreateNewBSplineCurve(m_OriginalCurve, D);
-//
-//        // 计算 Hausdorff 距离
-//        Standard_Real aHausdorffDistance = 0;
-//        if (m_OriginalFitPoints.size() > 0)
-//        {
-//            aHausdorffDistance = CurveFair::GetFitPointsCurveHausdorffDistance(m_FitPointParameters, aResultCurve);
-//            m_FitPointParameters = ReCalculateFitPointParameters(m_OriginalFitPoints, m_OriginalCurve);
-//        }
-//        else
-//        {
-//            aHausdorffDistance = CurveFair::GetCurveCurveHausdorffDistance(m_OriginalCurve, aResultCurve);
-//        }
-//
-//        m_HausdorffDistanceResult = aHausdorffDistance;
-//        if (aHausdorffDistance <= m_HausdorffDistanceTol || aCompouteTimes >= 100)
-//        {
-//            break;
-//        }
-//        else
-//        {
-//            theAlpha /= 2;
-//        }
-//    }
-//    return aResultCurve;
-//}
-
-// 稀疏矩阵求解
-Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
-    const Handle(Geom_BSplineCurve)& theCurve,
+sggk::BSplineCurve3DPtr CurveFair::GetTempFairCurveWithTangentConstraint(
+    const sggk::BSplineCurve3DPtr& theCurve,
     Eigen::MatrixXd M,
     Eigen::MatrixXd V,
     Eigen::MatrixXd& D0,
     Eigen::MatrixXd& D,
-    Standard_Real theAlpha)
+    double theAlpha)
 {
-    Standard_Integer n = D0.rows();
-    if (n <= 2) return Handle(Geom_BSplineCurve)();
+    int n = D0.rows();
+    if (n <= 2) return nullptr;
 
-    Standard_Integer num_unknowns = n - 2;
+    int num_unknowns = n - 2;
     Eigen::Vector3d D0_start = D0.row(0);
     Eigen::Vector3d D0_end = D0.row(n - 1);
 
@@ -1462,64 +1086,62 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
     Eigen::VectorXd h;
     Eigen::MatrixXd C_mat = ComputeConstraintMatrix(D0, h);
 
-    Standard_Integer aCompouteTimes = 0;
-    Handle(Geom_BSplineCurve) aResultCurve = nullptr;
+    int aCompouteTimes = 0;
+    sggk::BSplineCurve3DPtr aResultCurve = nullptr;
 
-    while (Standard_True)
+    while (true)
     {
         aCompouteTimes++;
 
         Eigen::MatrixXd A = theAlpha * M_internal + V_internal;
 
         Eigen::VectorXd b_x(num_unknowns), b_y(num_unknowns), b_z(num_unknowns);
-        for (Standard_Integer k = 0; k < num_unknowns; k++)
+        for (int k = 0; k < num_unknowns; k++)
         {
-            Standard_Real D0_term_x = M(0, k + 1) * D0_start.x();
-            Standard_Real Dn_term_x = M(n - 1, k + 1) * D0_end.x();
-            Standard_Real reg_term_x = V_internal(k, k) * D0_internal_x(k);
+            double D0_term_x = M(0, k + 1) * D0_start.x();
+            double Dn_term_x = M(n - 1, k + 1) * D0_end.x();
+            double reg_term_x = V_internal(k, k) * D0_internal_x(k);
             b_x(k) = -theAlpha * (D0_term_x + Dn_term_x) + reg_term_x;
 
-            Standard_Real D0_term_y = M(0, k + 1) * D0_start.y();
-            Standard_Real Dn_term_y = M(n - 1, k + 1) * D0_end.y();
-            Standard_Real reg_term_y = V_internal(k, k) * D0_internal_y(k);
+            double D0_term_y = M(0, k + 1) * D0_start.y();
+            double Dn_term_y = M(n - 1, k + 1) * D0_end.y();
+            double reg_term_y = V_internal(k, k) * D0_internal_y(k);
             b_y(k) = -theAlpha * (D0_term_y + Dn_term_y) + reg_term_y;
 
-            Standard_Real D0_term_z = M(0, k + 1) * D0_start.z();
-            Standard_Real Dn_term_z = M(n - 1, k + 1) * D0_end.z();
-            Standard_Real reg_term_z = V_internal(k, k) * D0_internal_z(k);
+            double D0_term_z = M(0, k + 1) * D0_start.z();
+            double Dn_term_z = M(n - 1, k + 1) * D0_end.z();
+            double reg_term_z = V_internal(k, k) * D0_internal_z(k);
             b_z(k) = -theAlpha * (D0_term_z + Dn_term_z) + reg_term_z;
         }
 
-        Standard_Integer total_vars = 3 * num_unknowns;
-        Standard_Integer system_size = total_vars + 4;
+        int total_vars = 3 * num_unknowns;
+        int system_size = total_vars + 4;
 
-        Eigen::SparseMatrix<Standard_Real> BigLHS_sparse(system_size, system_size);
-        std::vector<Eigen::Triplet<Standard_Real>> tripletList;
+        Eigen::SparseMatrix<double> BigLHS_sparse(system_size, system_size);
+        std::vector<Eigen::Triplet<double>> tripletList;
         tripletList.reserve(system_size * 10);
 
-        // 对角块 A
         for (int i = 0; i < num_unknowns; i++)
         {
             for (int j = 0; j < num_unknowns; j++)
             {
                 if (std::abs(A(i, j)) > 1e-12)
                 {
-                    tripletList.push_back(Eigen::Triplet<Standard_Real>(i, j, A(i, j)));
-                    tripletList.push_back(Eigen::Triplet<Standard_Real>(i + num_unknowns, j + num_unknowns, A(i, j)));
-                    tripletList.push_back(Eigen::Triplet<Standard_Real>(i + 2 * num_unknowns, j + 2 * num_unknowns, A(i, j)));
+                    tripletList.push_back(Eigen::Triplet<double>(i, j, A(i, j)));
+                    tripletList.push_back(Eigen::Triplet<double>(i + num_unknowns, j + num_unknowns, A(i, j)));
+                    tripletList.push_back(Eigen::Triplet<double>(i + 2 * num_unknowns, j + 2 * num_unknowns, A(i, j)));
                 }
             }
         }
 
-        // 约束块 C_mat 和 C_mat^T
         for (int i = 0; i < 4; i++)
         {
             for (int j = 0; j < total_vars; j++)
             {
                 if (std::abs(C_mat(i, j)) > 1e-12)
                 {
-                    tripletList.push_back(Eigen::Triplet<Standard_Real>(total_vars + i, j, C_mat(i, j)));
-                    tripletList.push_back(Eigen::Triplet<Standard_Real>(j, total_vars + i, C_mat(i, j)));
+                    tripletList.push_back(Eigen::Triplet<double>(total_vars + i, j, C_mat(i, j)));
+                    tripletList.push_back(Eigen::Triplet<double>(j, total_vars + i, C_mat(i, j)));
                 }
             }
         }
@@ -1535,7 +1157,7 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
         Eigen::VectorXd solution(system_size);
         try
         {
-            Eigen::SparseLU<Eigen::SparseMatrix<Standard_Real>> solver;
+            Eigen::SparseLU<Eigen::SparseMatrix<double>> solver;
             solver.analyzePattern(BigLHS_sparse);
             solver.factorize(BigLHS_sparse);
             solution = solver.solve(BigRHS);
@@ -1562,7 +1184,7 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
 
         aResultCurve = CreateNewBSplineCurve(m_OriginalCurve, D);
 
-        Standard_Real aHausdorffDistance = 0;
+        double aHausdorffDistance = 0;
         if (m_OriginalFitPoints.size() > 0)
         {
             aHausdorffDistance = CurveFair::GetFitPointsCurveHausdorffDistance(m_FitPointParameters, aResultCurve);
@@ -1583,78 +1205,67 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempFairCurveWithTangentConstraint(
     return aResultCurve;
 }
 
-
-Handle(Geom_BSplineCurve) CurveFair::GetTempContinuniousFairCurve(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    Eigen::MatrixXd M,          // n×n 矩阵
-    Eigen::MatrixXd C,          // m×n 矩阵（包含首尾控制点）
-    Eigen::MatrixXd V,          // n×n 矩阵
-    Eigen::MatrixXd& D0,        // n×3 初始控制点
-    Eigen::MatrixXd& D,         // n×3 输出控制点
-    Standard_Real theAlpha)
+sggk::BSplineCurve3DPtr CurveFair::GetTempContinuniousFairCurve(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    Eigen::MatrixXd M,
+    Eigen::MatrixXd C,
+    Eigen::MatrixXd V,
+    Eigen::MatrixXd& D0,
+    Eigen::MatrixXd& D,
+    double theAlpha)
 {
-    // 控制点的总数
-    Standard_Integer n = D0.rows();
-    Standard_Integer m = C.rows();       // 约束条件数量
-    Standard_Integer internal_n = n - 2;
-    // 固定控制点
+    int n = D0.rows();
+    int m = C.rows();
+    int internal_n = n - 2;
     Eigen::Vector3d D0_start = D0.row(0);
     Eigen::Vector3d D0_end = D0.row(n - 1);
 
-    // 获取需要优化的控制点原始值
     Eigen::MatrixXd D0_internal = D0.block(1, 0, internal_n, 3);
-    Eigen::VectorXd D0_internal_x = D0.col(0).segment(1, internal_n);  // x分量
-    Eigen::VectorXd D0_internal_y = D0.col(1).segment(1, internal_n);  // y分量
-    Eigen::VectorXd D0_internal_z = D0.col(2).segment(1, internal_n);  // z分量
+    Eigen::VectorXd D0_internal_x = D0.col(0).segment(1, internal_n);
+    Eigen::VectorXd D0_internal_y = D0.col(1).segment(1, internal_n);
+    Eigen::VectorXd D0_internal_z = D0.col(2).segment(1, internal_n);
 
-    // A = α * M_internal + V_internal
-    // 获取需要优化的控制点对应的 M 矩阵和 V 矩阵
-    Eigen::MatrixXd M_internal = M.block(1, 1, internal_n, internal_n); // (n - 2) × (n - 2)
-    Eigen::MatrixXd V_internal = V.block(1, 1, internal_n, internal_n); // (n - 2) × (n - 2)
-    Eigen::MatrixXd C_internal = C.block(0, 1, m, internal_n); // 仅保留内部控制点对应的列 // (m) × (n - 2)
+    Eigen::MatrixXd M_internal = M.block(1, 1, internal_n, internal_n);
+    Eigen::MatrixXd V_internal = V.block(1, 1, internal_n, internal_n);
+    Eigen::MatrixXd C_internal = C.block(0, 1, m, internal_n);
 
-    // 计算右端项 h（首尾控制点对约束的贡献）
     Eigen::VectorXd h_x(m);
     Eigen::VectorXd h_y(m);
     Eigen::VectorXd h_z(m);
-    for (Standard_Integer j = 0; j < m; ++j)
+    for (int j = 0; j < m; ++j)
     {
         h_x(j) = -C(j, 0) * D0_start.x() - C(j, n - 1) * D0_end.x();
         h_y(j) = -C(j, 0) * D0_start.y() - C(j, n - 1) * D0_end.y();
         h_z(j) = -C(j, 0) * D0_start.z() - C(j, n - 1) * D0_end.z();
     }
 
-    // 构造扩展系统 [ A  C_internal^T ]
-    //              [ C_internal  0    ]
     Eigen::MatrixXd extendedA(internal_n + m, internal_n + m);
     extendedA.topRightCorner(internal_n, m) = C_internal.transpose();
     extendedA.bottomLeftCorner(m, internal_n) = C_internal;
     extendedA.bottomRightCorner(m, m).setZero();
-    Standard_Integer aCompouteTimes = 0;
-    Handle(Geom_BSplineCurve) aResultCurve;
+    int aCompouteTimes = 0;
+    sggk::BSplineCurve3DPtr aResultCurve;
     while (++aCompouteTimes <= 100)
     {
         Eigen::MatrixXd A = theAlpha * M_internal + V_internal;
         extendedA.topLeftCorner(internal_n, internal_n) = A;
 
-        //     分别求解x、y、z分量
         Eigen::VectorXd b_x = Eigen::VectorXd::Zero(internal_n);
         Eigen::VectorXd b_y = Eigen::VectorXd::Zero(internal_n);
         Eigen::VectorXd b_z = Eigen::VectorXd::Zero(internal_n);
 
-        //    减去首尾控制点的影响，分别计算每个分量的b
-        for (Standard_Integer k = 0; k < n - 2; k++)
+        for (int k = 0; k < n - 2; k++)
         {
-            Standard_Real D0_term_x = M(0, k + 1) * D0_start.x();
-            Standard_Real D0_term_y = M(0, k + 1) * D0_start.y();
-            Standard_Real D0_term_z = M(0, k + 1) * D0_start.z();
-            Standard_Real Dn_term_x = M(n - 1, k + 1) * D0_end.x();
-            Standard_Real Dn_term_y = M(n - 1, k + 1) * D0_end.y();
-            Standard_Real Dn_term_z = M(n - 1, k + 1) * D0_end.z();
+            double D0_term_x = M(0, k + 1) * D0_start.x();
+            double D0_term_y = M(0, k + 1) * D0_start.y();
+            double D0_term_z = M(0, k + 1) * D0_start.z();
+            double Dn_term_x = M(n - 1, k + 1) * D0_end.x();
+            double Dn_term_y = M(n - 1, k + 1) * D0_end.y();
+            double Dn_term_z = M(n - 1, k + 1) * D0_end.z();
 
-            Standard_Real reg_term_x = V_internal(k, k) * D0_internal_x(k);
-            Standard_Real reg_term_y = V_internal(k, k) * D0_internal_y(k);
-            Standard_Real reg_term_z = V_internal(k, k) * D0_internal_z(k);
+            double reg_term_x = V_internal(k, k) * D0_internal_x(k);
+            double reg_term_y = V_internal(k, k) * D0_internal_y(k);
+            double reg_term_z = V_internal(k, k) * D0_internal_z(k);
 
             b_x(k) = -theAlpha * (D0_term_x + Dn_term_x) + reg_term_x;
             b_y(k) = -theAlpha * (D0_term_y + Dn_term_y) + reg_term_y;
@@ -1678,11 +1289,6 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempContinuniousFairCurve(
             solution_y = svd.solve(rhs_y);
             solution_z = svd.solve(rhs_z);
         }
-        catch (const Standard_Failure& e)
-        {
-            m_errorCode.push_back(e.GetMessageString());
-            return nullptr;
-        }
         catch (const std::exception& e)
         {
             m_errorCode.push_back(e.what());
@@ -1694,28 +1300,23 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempContinuniousFairCurve(
             return nullptr;
         }
 
-
         Eigen::VectorXd D_internal_x = solution_x.head(internal_n);
         Eigen::VectorXd D_internal_y = solution_y.head(internal_n);
         Eigen::VectorXd D_internal_z = solution_z.head(internal_n);
 
-        //     合并结果
         Eigen::MatrixXd D_internal(n - 2, 3);
         D_internal.col(0) = D_internal_x;
         D_internal.col(1) = D_internal_y;
         D_internal.col(2) = D_internal_z;
 
-        //     构建最终控制点矩阵
         D = Eigen::MatrixXd::Zero(n, 3);
-        D.row(0) = D0_start;                    // 起始点
-        D.block(1, 0, n - 2, 3) = D_internal;   // 内部点
-        D.row(n - 1) = D0_end;                  // 终止点
+        D.row(0) = D0_start;
+        D.block(1, 0, n - 2, 3) = D_internal;
+        D.row(n - 1) = D0_end;
 
-        //    创建新的B样条曲线
         aResultCurve = CreateNewBSplineCurve(m_OriginalCurve, D);
 
-        // 计算新旧曲线的控制点偏差
-        Standard_Real aHausdorffDistance = 0;
+        double aHausdorffDistance = 0;
         if (m_OriginalFitPoints.size() > 0)
         {
             aHausdorffDistance = CurveFair::GetFitPointsCurveHausdorffDistance(m_FitPointParameters, aResultCurve);
@@ -1741,20 +1342,16 @@ Handle(Geom_BSplineCurve) CurveFair::GetTempContinuniousFairCurve(
 
 void CurveFair::Iterator(Eigen::MatrixXd D0, Eigen::MatrixXd D)
 {
-    // 分步移动参数
-    Standard_Integer n = D0.rows();
-    Standard_Real stepSize = 10;
-    Standard_Integer aStepCnt = 0;
-    while (Standard_True)
+    int n = D0.rows();
+    double stepSize = 10;
+    int aStepCnt = 0;
+    while (true)
     {
-        // 计算下一步的位置
         D0 += (D - D0) / 10;
         aStepCnt++;
 
-        // 生成新曲线
-        Handle(Geom_BSplineCurve) aCurve = CreateNewBSplineCurve(m_OriginalCurve, D0);
+        sggk::BSplineCurve3DPtr aCurve = CreateNewBSplineCurve(m_OriginalCurve, D0);
         M = ComputeEnergyMatrix(aCurve, m_OriginalCurve->Degree());
-        //C = ComputeContinuityMatrix(aCurve, m_OriginalCurve->Degree());
         SetControlPointWeightMatrix(aCurve, V);
         aCurve = GetTempFairCurveWithTangentConstraint(aCurve, M, V, D0, D, m_Alpha);
 
@@ -1769,74 +1366,65 @@ void CurveFair::Iterator(Eigen::MatrixXd D0, Eigen::MatrixXd D)
     }
 }
 
-
-Handle(Geom_BSplineCurve) CurveFair::SampleAndFitBSpline(
-    const Handle(Geom_BSplineCurve)& theOriginalCurve,
-    Standard_Integer theSampleNum,
-    std::vector<gp_Pnt>& theFitPoints,
-    Standard_Integer theMaxDegree,
-    GeomAbs_Shape theContinuity,
-    Standard_Real theTolerance)
+sggk::BSplineCurve3DPtr CurveFair::SampleAndFitBSpline(
+    const sggk::BSplineCurve3DPtr& theOriginalCurve,
+    int theSampleNum,
+    std::vector<sggk::Point3D>& theFitPoints,
+    int theMaxDegree,
+    int theContinuity,
+    double theTolerance)
 {
-    if (theSampleNum < 2 || theOriginalCurve.IsNull())
+    if (theSampleNum < 2 || !theOriginalCurve)
     {
         std::cerr << "Invalid input: too few points or null curve." << std::endl;
         return nullptr;
     }
 
-    GeomAdaptor_Curve adaptor(theOriginalCurve);
-    Standard_Real totalLength = GCPnts_AbscissaPoint::Length(adaptor);
+    double totalLength = ComputeCurveLength(theOriginalCurve);
+    double firstParam = theOriginalCurve->MinParam();
 
-    TColgp_Array1OfPnt sampledPoints(1, theSampleNum);
-    for (Standard_Integer i = 0; i < theSampleNum; ++i)
+    std::vector<sggk::Point3D> sampledPoints(theSampleNum);
+    for (int i = 0; i < theSampleNum; ++i)
     {
-        Standard_Real targetLength = (totalLength * i) / (theSampleNum - 1);
-        GCPnts_AbscissaPoint gap(adaptor, targetLength, theOriginalCurve->FirstParameter());
-        Standard_Real u = gap.Parameter();
-        gp_Pnt pt = theOriginalCurve->Value(u);
-        sampledPoints.SetValue(i + 1, pt);
+        double targetLength = (totalLength * i) / (theSampleNum - 1);
+        sggk::Point3D p;
+        double u = theOriginalCurve->CalcParaByLength(targetLength, firstParam, p);
+        sampledPoints[i] = theOriginalCurve->CalcPoint(u);
     }
-    theFitPoints = OccArrayConvertoVector(sampledPoints);
+    theFitPoints = sampledPoints;
 
-    Handle(Geom_BSplineCurve) aBSplineCurve;
-
-    GeomAPI_PointsToBSpline fitter(
-        sampledPoints,
-        theMaxDegree,       // 最小次数 = 最大次数
-        theMaxDegree,
-        theContinuity,
-        theTolerance
-    );
-    aBSplineCurve = fitter.Curve();
-
-
-    return aBSplineCurve;
+    sggk::BSCrv3DInterpolationOpts opts;
+    opts.degree = theMaxDegree;
+    sggk::BSCrvFitting3DResult res = sggk::BSCrvFitting::Interpolation3D(sampledPoints, opts);
+    return res.curve;
 }
 
-std::vector<gp_Pnt> CurveFair::SampleCurveWithArcLength(const Handle(Geom_BSplineCurve)& bsplineCurve, Standard_Integer numSamples)
+std::vector<sggk::Point3D> CurveFair::SampleCurveWithArcLength(const sggk::BSplineCurve3DPtr& bsplineCurve, int numSamples)
 {
-    Handle(GeomAdaptor_Curve) curve = new GeomAdaptor_Curve(bsplineCurve);
-    GCPnts_QuasiUniformAbscissa sampler(*curve, numSamples);
-    std::vector<gp_Pnt> sampledPointsWithArcLength;
+    std::vector<sggk::Point3D> sampledPointsWithArcLength;
+    if (!bsplineCurve || numSamples <= 0) return sampledPointsWithArcLength;
 
-    for (Standard_Integer i = 1; i <= sampler.NbPoints(); ++i)
+    double totalLength = ComputeCurveLength(bsplineCurve);
+    double firstParam = bsplineCurve->MinParam();
+
+    for (int i = 0; i < numSamples; ++i)
     {
-        Standard_Real param = sampler.Parameter(i);
-        gp_Pnt point = curve->Value(param); // 获取点坐标
-
-        // 更新点
+        double targetLength = (totalLength * i) / (numSamples - 1);
+        sggk::Point3D p;
+        double u = bsplineCurve->CalcParaByLength(targetLength, firstParam, p);
+        sggk::Point3D point = bsplineCurve->CalcPoint(u);
         sampledPointsWithArcLength.emplace_back(point);
     }
 
     return sampledPointsWithArcLength;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::SampleAndFitBSpline(
-    std::vector<gp_Pnt>& theFitPoints,
-    Standard_Real theTolerance,
-    Standard_Boolean theResortFlag,
-    Standard_Integer theMaxDegree,
-    GeomAbs_Shape theContinuity)
+sggk::BSplineCurve3DPtr CurveFair::SampleAndFitBSpline(
+    std::vector<sggk::Point3D>& theFitPoints,
+    double theTolerance,
+    bool theResortFlag,
+    int theMaxDegree,
+    int theContinuity)
 {
     if (theFitPoints.size() < 2)
     {
@@ -1844,153 +1432,121 @@ Handle(Geom_BSplineCurve) CurveFair::SampleAndFitBSpline(
         return nullptr;
     }
 
-
     if (theResortFlag)
     {
         ReorderPointsNearestNeighbor(theFitPoints);
     }
 
-    Handle(Geom_BSplineCurve) aBSplineCurve;
-
-    // 转换为 OpenCASCADE 点数组
-    TColgp_Array1OfPnt aSamplePointArray(1, static_cast<Standard_Integer>(theFitPoints.size()));
-    for (Standard_Integer i = 0; i < static_cast<Standard_Integer>(theFitPoints.size()); ++i)
-    {
-        aSamplePointArray.SetValue(i + 1, theFitPoints[i]);
-    }
-    GeomAPI_PointsToBSpline fitter(
-        aSamplePointArray,
-        Approx_ChordLength,
-        theMaxDegree,
-        theMaxDegree,
-        theContinuity,
-        theTolerance
-    );
-    aBSplineCurve = fitter.Curve();
-
-    return aBSplineCurve;
+    sggk::BSCrv3DInterpolationOpts opts;
+    opts.degree = theMaxDegree;
+    sggk::BSCrvFitting3DResult res = sggk::BSCrvFitting::Interpolation3D(theFitPoints, opts);
+    return res.curve;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::RefineCurveByCurvatureAuto(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    const std::vector<Standard_Real>& myKnotSeq,
-    const Standard_Integer baseInsertNum)
+sggk::BSplineCurve3DPtr CurveFair::RefineCurveByCurvatureAuto(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    const std::vector<double>& myKnotSeq,
+    const int baseInsertNum)
 {
-    if (theCurve.IsNull()) return theCurve;
+    if (!theCurve) return theCurve;
 
-    Handle(Geom_BSplineCurve) refinedCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
-    const Standard_Integer degree = refinedCurve->Degree();
-    const Standard_Integer nPoles = refinedCurve->NbPoles();
-    const TColStd_Array1OfReal& knotArray = refinedCurve->Knots();
+    sggk::BSplineCurve3DPtr refinedCurve = CloneBSpline(theCurve);
+    const int degree = refinedCurve->Degree();
+    const int nPoles = (int)refinedCurve->ControlPoints().size();
+    const sggk::RealArray& knotArray = refinedCurve->Knots();
 
-    const Standard_Integer nbKnots = knotArray.Length();
-    Standard_Integer lower = knotArray.Lower();
-    Standard_Integer upper = knotArray.Upper();
-    Standard_Real KnotUpper = knotArray(knotArray.Upper());
-    Standard_Real KnotLower = knotArray(knotArray.Lower());
-    std::vector<Standard_Real> curvatureRates(nbKnots);
+    const int nbKnots = (int)knotArray.size();
+    double KnotUpper = knotArray.back();
+    double KnotLower = knotArray.front();
+    std::vector<double> curvatureRates(nbKnots);
     m_ArcLengthMappingFunction = GetArclengthParameterMapping(refinedCurve);
 
-    // Step 1: 计算每个节点处的曲率指标
-    for (Standard_Integer i = lower; i <= upper; ++i)
+    for (int i = 0; i < nbKnots; ++i)
     {
-        Standard_Real u = knotArray(i);
-        Standard_Real s = f_inverse(refinedCurve, u);
-        Standard_Real f0 = f(s);
-        Standard_Real f1 = f(s, 1);
-        Standard_Real f2 = f(s, 2);
-        Standard_Real f3 = f(s, 3);
+        double u = knotArray[i];
+        double s = f_inverse(refinedCurve, u);
+        double f0 = f(s);
+        double f1 = f(s, 1);
+        double f2 = f(s, 2);
+        double f3 = f(s, 3);
 
-        Standard_Real sum = 0.0;
-        for (Standard_Integer j = 0; j < nPoles; ++j)
+        double sum = 0.0;
+        for (int j = 0; j < nPoles; ++j)
         {
-            Standard_Real k = BasisFunctionDerivative(f0, j, degree, 3, myKnotSeq) * std::pow(f1, 3)
+            double k = BasisFunctionDerivative(f0, j, degree, 3, myKnotSeq) * std::pow(f1, 3)
                 + 3 * BasisFunctionDerivative(f0, j, degree, 2, myKnotSeq) * f1 * f2
                 + BasisFunctionDerivative(f0, j, degree, 1, myKnotSeq) * f3;
             sum += k * k;
         }
-
-        curvatureRates[i - lower] = sum;
+        curvatureRates[i] = sum;
     }
 
-    // Step 2: 计算平均曲率
-    Standard_Real sumCurv = 0.0;
+    double sumCurv = 0.0;
     for (auto c : curvatureRates) sumCurv += c;
-    Standard_Real avgCurv = sumCurv / curvatureRates.size();
+    double avgCurv = sumCurv / curvatureRates.size();
 
-    // Step 3: 收集所有需要插入的 u 值（曲率大于阈值的中点区间）
-    std::vector<Standard_Real> insertParams;
+    std::vector<double> insertParams;
 
-    for (Standard_Integer i = lower; i < upper; ++i)
+    for (int i = 0; i < nbKnots - 1; ++i)
     {
-        if (curvatureRates[i - lower] > avgCurv)
+        if (curvatureRates[i] > avgCurv)
         {
-            Standard_Real left = knotArray(i);
-            Standard_Real right = knotArray(i + 1);
+            double left = knotArray[i];
+            double right = knotArray[i + 1];
 
-            if (right - left < (KnotUpper - KnotLower) / 100) continue; // 避免在非常小的区间内插值
+            if (right - left < (KnotUpper - KnotLower) / 100) continue;
 
-            // 自适应插值个数（可按比例加权）
-            Standard_Integer insertNum = baseInsertNum;
-            if (curvatureRates[i - lower] > 2 * avgCurv)
+            int insertNum = baseInsertNum;
+            if (curvatureRates[i] > 2 * avgCurv)
                 insertNum *= 3;
 
-            for (Standard_Integer j = 1; j <= insertNum; ++j)
+            for (int j = 1; j <= insertNum; ++j)
             {
-                Standard_Real u = left + (right - left) * j / (insertNum + 1);
+                double u = left + (right - left) * j / (insertNum + 1);
                 insertParams.push_back(u);
             }
         }
     }
 
-    // Step 4: 插入所有收集到的 knot 参数值
     if (!insertParams.empty())
     {
-        TColStd_Array1OfReal uArray(1, static_cast<Standard_Integer>(insertParams.size()));
-        TColStd_Array1OfInteger mults(1, static_cast<Standard_Integer>(insertParams.size()));
-        for (Standard_Integer i = 0; i < insertParams.size(); ++i)
+        for (double u : insertParams)
         {
-            uArray.SetValue(i + 1, insertParams[i]);
-            mults.SetValue(i + 1, 1);
+            refinedCurve->InsertKnots(u, 1);
         }
-
-        refinedCurve->InsertKnots(uArray, mults, 1e-7, Standard_True);
     }
 
     return refinedCurve;
 }
-Handle(Geom_BSplineCurve) CurveFair::RefineCurveByFitPoints(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    const Standard_Integer baseInsertNum)
+
+sggk::BSplineCurve3DPtr CurveFair::RefineCurveByFitPoints(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    const int baseInsertNum)
 {
-    if (theCurve.IsNull() || baseInsertNum <= 0)
-        return theCurve;          // 兜底
+    if (!theCurve || baseInsertNum <= 0)
+        return theCurve;
 
-    Handle(Geom_BSplineCurve) refinedCurve =
-        Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
+    sggk::BSplineCurve3DPtr refinedCurve = CloneBSpline(theCurve);
 
-    const TColStd_Array1OfReal& knotArray = refinedCurve->Knots();
-    const Standard_Integer lower = knotArray.Lower();
-    const Standard_Integer upper = knotArray.Upper();
+    const sggk::RealArray& knotArray = refinedCurve->Knots();
+    const int lower = 0;
+    const int upper = (int)knotArray.size() - 1;
 
-    constexpr Standard_Real tol = 1e-12;               // 节点比较公差
-    std::map<std::pair<Standard_Integer, Standard_Integer>, int> spanCounts; // 区间计数
+    constexpr double tol = 1e-12;
+    std::map<std::pair<int, int>, int> spanCounts;
 
-    //=== 1) 统计每个区间的拟合点数量 =========================
-    for (const auto& fp : m_FitPointParameters)        // (gp_Pnt , uFit)
+    for (const auto& fp : m_FitPointParameters)
     {
-        Standard_Real uFit = fp.second;
+        double uFit = fp.second;
 
-        if (uFit < knotArray(lower) - tol || uFit > knotArray(upper) + tol)
+        if (uFit < knotArray[lower] - tol || uFit > knotArray[upper] + tol)
             continue;
 
-        // 线性扫描找 span
-        Standard_Integer span = -1;
-        for (Standard_Integer i = lower; i < upper; ++i)
+        int span = -1;
+        for (int i = lower; i < upper; ++i)
         {
-            if (uFit + tol < knotArray(i)) break;      // 过早
-            if (uFit >= knotArray(i) - tol &&
-                uFit < knotArray(i + 1) - tol)
+            if (uFit + tol < knotArray[i]) break;
+            if (uFit >= knotArray[i] - tol && uFit < knotArray[i + 1] - tol)
             {
                 span = i;
                 break;
@@ -1999,27 +1555,25 @@ Handle(Geom_BSplineCurve) CurveFair::RefineCurveByFitPoints(
 
         if (span == -1) continue;
 
-        Standard_Real uL = knotArray(span);
-        Standard_Real uR = knotArray(span + 1);
-        if (uR - uL < tol) continue;                   // 极小区间跳过
+        double uL = knotArray[span];
+        double uR = knotArray[span + 1];
+        if (uR - uL < tol) continue;
 
-        spanCounts[{span, span + 1}]++;  // 统计区间出现次数
+        spanCounts[{span, span + 1}]++;
     }
 
-    //=== 2) 根据区间频率计算插入节点 =========================
-    std::vector<Standard_Real> insertParams;
+    std::vector<double> insertParams;
     for (const auto& entry : spanCounts)
     {
-        Standard_Integer span = entry.first.first;
-        Standard_Real uL = knotArray(span);
-        Standard_Real uR = knotArray(span + 1);
+        int span = entry.first.first;
+        double uL = knotArray[span];
+        double uR = knotArray[span + 1];
         int count = entry.second;
 
-        // 根据区间频率决定插入节点数
         int actualInsertNum = baseInsertNum * count;
-        for (Standard_Integer j = 1; j <= actualInsertNum; ++j)
+        for (int j = 1; j <= actualInsertNum; ++j)
         {
-            Standard_Real uNew = uL + (uR - uL) * j / (actualInsertNum + 1);
+            double uNew = uL + (uR - uL) * j / (actualInsertNum + 1);
             insertParams.push_back(uNew);
         }
     }
@@ -2027,47 +1581,37 @@ Handle(Geom_BSplineCurve) CurveFair::RefineCurveByFitPoints(
     if (!insertParams.empty())
     {
         std::sort(insertParams.begin(), insertParams.end());
+        insertParams.erase(std::unique(insertParams.begin(), insertParams.end(),
+            [](double a, double b) { return std::abs(a - b) < 1e-10; }), insertParams.end());
 
-        // unique - 确保没有重复节点
-        insertParams.erase(std::unique(
-            insertParams.begin(), insertParams.end(),
-            [](Standard_Real a, Standard_Real b) { return std::abs(a - b) < 1e-10; }),
-            insertParams.end());
-
-        TColStd_Array1OfReal    uArray(1, static_cast<Standard_Integer>(insertParams.size()));
-        TColStd_Array1OfInteger mArray(1, static_cast<Standard_Integer>(insertParams.size()));
-        for (Standard_Integer i = 0; i < insertParams.size(); ++i)
+        for (double u : insertParams)
         {
-            uArray.SetValue(i + 1, insertParams[i]);
-            mArray.SetValue(i + 1, 1);   // 单重插 knot 即可
+            refinedCurve->InsertKnots(u, 1);
         }
-
-        refinedCurve->InsertKnots(uArray, mArray, 1e-7, Standard_True /* scaled */);
     }
 
     return refinedCurve;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::RefineByTangentAngle(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    const Standard_Integer theBasicInsertNum)
+sggk::BSplineCurve3DPtr CurveFair::RefineByTangentAngle(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    const int theBasicInsertNum)
 {
-    if (theCurve.IsNull()) return theCurve;
+    if (!theCurve) return theCurve;
 
-    Handle(Geom_BSplineCurve) refinedCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
-    std::vector<Standard_Real> knots = OccArrayConvertoVector(refinedCurve->Knots());
+    sggk::BSplineCurve3DPtr refinedCurve = CloneBSpline(theCurve);
+    std::vector<double> knots = refinedCurve->Knots();
 
-    // 统计每个节点的左右导数夹角
-    std::vector<Standard_Real> angles(knots.size(), 0.0);
+    std::vector<double> angles(knots.size(), 0.0);
     for (size_t i = 1; i < knots.size() - 1; ++i)
     {
-        gp_Vec leftVec = Dt(refinedCurve, knots[i] - 1e-6, 3);  // 1阶导数
-        gp_Vec rightVec = Dt(refinedCurve, knots[i] + 1e-6, 3);
-        angles[i] = leftVec.Angle(rightVec) * 180.0 / M_PI;
+        sggk::Vector3D leftVec = Dt(refinedCurve, knots[i] - 1e-6, 3);
+        sggk::Vector3D rightVec = Dt(refinedCurve, knots[i] + 1e-6, 3);
+        angles[i] = leftVec.CalcAngle(rightVec) * 180.0 / M_PI_VAL;
         std::cout << angles[i] << std::endl;
     }
 
-    Standard_Real avgAngle = 0.0;
+    double avgAngle = 0.0;
     int validCount = 0;
     for (size_t i = 1; i < angles.size() - 1; ++i)
     {
@@ -2076,34 +1620,32 @@ Handle(Geom_BSplineCurve) CurveFair::RefineByTangentAngle(
     }
 
     avgAngle /= std::max(validCount, 1);
-    // 统计每个区间的插值数（左右均分）
-    std::map<std::pair<Standard_Real, Standard_Real>, int> spanInsertCount;
+    std::map<std::pair<double, double>, int> spanInsertCount;
 
     for (size_t i = 1; i < knots.size() - 1; ++i)
     {
-        int insertNum = theBasicInsertNum + (angles[i] / avgAngle - 1);
+        int insertNum = theBasicInsertNum + (int)(angles[i] / avgAngle - 1);
         if (insertNum > 0)
         {
-            Standard_Real uLeft = knots[i - 1];
-            Standard_Real uMid = knots[i];
-            Standard_Real uRight = knots[i + 1];
+            double uLeft = knots[i - 1];
+            double uMid = knots[i];
+            double uRight = knots[i + 1];
 
             spanInsertCount[{uLeft, uMid}] += insertNum;
             spanInsertCount[{uMid, uRight}] += insertNum;
         }
     }
 
-    // 统一收集插值参数
-    std::vector<Standard_Real> insertParams;
+    std::vector<double> insertParams;
     for (const auto& kv : spanInsertCount)
     {
-        Standard_Real u1 = kv.first.first;
-        Standard_Real u2 = kv.first.second;
+        double u1 = kv.first.first;
+        double u2 = kv.first.second;
         int count = kv.second;
 
         for (int i = 1; i <= count; ++i)
         {
-            Standard_Real u = u1 + i * (u2 - u1) / (count + 1);
+            double u = u1 + i * (u2 - u1) / (count + 1);
             insertParams.push_back(u);
         }
     }
@@ -2111,174 +1653,151 @@ Handle(Geom_BSplineCurve) CurveFair::RefineByTangentAngle(
     if (insertParams.empty())
         return refinedCurve;
 
-    // 去重 + 插值
     std::sort(insertParams.begin(), insertParams.end());
     insertParams.erase(std::unique(insertParams.begin(), insertParams.end(),
-        [](Standard_Real a, Standard_Real b) { return std::abs(a - b) < 1e-10; }), insertParams.end());
+        [](double a, double b) { return std::abs(a - b) < 1e-10; }), insertParams.end());
 
-    // 准备参数数组
-    TColStd_Array1OfReal    uArray(1, static_cast<Standard_Integer>(insertParams.size()));
-    TColStd_Array1OfInteger mArray(1, static_cast<Standard_Integer>(insertParams.size()));
-
-    for (Standard_Integer i = 0; i < insertParams.size(); ++i)
+    for (double u : insertParams)
     {
-        uArray.SetValue(i + 1, insertParams[i]);
-        mArray.SetValue(i + 1, 1); // multiplicity = 1
+        refinedCurve->InsertKnots(u, 1);
     }
-
-    // 插入 knot，使用 scaled 模式
-    refinedCurve->InsertKnots(uArray, mArray, 1e-7, Standard_True);
 
     return refinedCurve;
 }
 
-std::vector<Standard_Real> CurveFair::ComputeThirdDerivativeAngles(
-    const Handle(Geom_BSplineCurve)& theCurve)
+std::vector<double> CurveFair::ComputeThirdDerivativeAngles(
+    const sggk::BSplineCurve3DPtr& theCurve)
 {
-    std::vector<Standard_Real> angleResults;
+    std::vector<double> angleResults;
 
-    if (theCurve.IsNull())
+    if (!theCurve)
         return angleResults;
 
-    // 拷贝一份曲线，避免原始数据被修改
-    Handle(Geom_BSplineCurve) curveCopy = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
+    sggk::BSplineCurve3DPtr curveCopy = CloneBSpline(theCurve);
 
-    // 获取 knots
-    std::vector<Standard_Real> knots = OccArrayConvertoVector(curveCopy->Knots());
+    std::vector<double> knots = curveCopy->Knots();
 
     if (knots.size() < 3)
-        return angleResults; // 没有内部节点
+        return angleResults;
 
     angleResults.resize(knots.size(), 0.0);
 
     for (size_t i = 1; i < knots.size() - 1; ++i)
     {
-        Standard_Real u = knots[i];
-        gp_Vec leftVec = Dt(curveCopy, u - 1e-6, 3);   // 三阶导数（左极限）
-        gp_Vec rightVec = Dt(curveCopy, u + 1e-6, 3);  // 三阶导数（右极限）
+        double u = knots[i];
+        sggk::Vector3D leftVec = Dt(curveCopy, u - 1e-6, 3);
+        sggk::Vector3D rightVec = Dt(curveCopy, u + 1e-6, 3);
 
-        if (leftVec.Magnitude() > gp::Resolution() && rightVec.Magnitude() > gp::Resolution())
+        if (leftVec.Length() > RESOLUTION && rightVec.Length() > RESOLUTION)
         {
-            angleResults[i] = leftVec.Angle(rightVec) * 180.0 / M_PI; // 返回弧度值
+            angleResults[i] = leftVec.CalcAngle(rightVec) * 180.0 / M_PI_VAL;
         }
         else
         {
-            angleResults[i] = 0.0; // 有一侧为零向量，不计算夹角
+            angleResults[i] = 0.0;
         }
     }
 
     return angleResults;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::InsertKnotsBetweenKnotSpan(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    Standard_Real t1,
-    Standard_Real t2,
-    Standard_Integer nInsert)
+sggk::BSplineCurve3DPtr CurveFair::InsertKnotsBetweenKnotSpan(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    double t1,
+    double t2,
+    int nInsert)
 {
-    if (theCurve.IsNull() || nInsert <= 0 || t1 >= t2)
+    if (!theCurve || nInsert <= 0 || t1 >= t2)
     {
         std::cerr << "Invalid input to InsertKnotsBetween." << std::endl;
         return theCurve;
     }
 
-    // 获取原始节点向量
-    TColStd_Array1OfReal knots = theCurve->Knots();
-    TColStd_Array1OfInteger mults = theCurve->Multiplicities();
+    sggk::RealArray knots = theCurve->Knots();
+    double knotMin = knots.front();
+    double knotMax = knots.back();
 
-    Standard_Integer nbKnots = theCurve->NbKnots();
-    Standard_Real knotMin = knots.First();
-    Standard_Real knotMax = knots.Last();
-
-    // 检查 t1 和 t2 是否在 knot 范围内
     if (t1 < knotMin || t2 > knotMax)
     {
         std::cerr << "t1 or t2 out of knot vector range." << std::endl;
         return theCurve;
     }
 
-    // 生成 nInsert 个均匀新节点
-    std::vector<Standard_Real> newKnots;
+    std::vector<double> newKnots;
     for (int i = 1; i <= nInsert; ++i)
     {
-        Standard_Real newKnot = t1 + i * (t2 - t1) / (nInsert + 1);
+        double newKnot = t1 + i * (t2 - t1) / (nInsert + 1);
         newKnots.push_back(newKnot);
     }
 
-    // 复制曲线并插入节点
-    Handle(Geom_BSplineCurve) newCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
+    sggk::BSplineCurve3DPtr newCurve = CloneBSpline(theCurve);
     for (const auto& u : newKnots)
     {
-        newCurve->InsertKnot(u, 1, 1e-7); // multiplicity=1, tolerance可调
+        newCurve->InsertKnots(u, 1);
     }
 
     return newCurve;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::InsertKnots(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    const std::vector<Standard_Real>& params,
-    Standard_Integer mult)
+sggk::BSplineCurve3DPtr CurveFair::InsertKnots(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    const std::vector<double>& params,
+    int mult)
 {
-    if (theCurve.IsNull() || params.empty() || mult <= 0)
+    if (!theCurve || params.empty() || mult <= 0)
     {
         std::cerr << "Invalid input to InsertKnotsAtParameters." << std::endl;
         return theCurve;
     }
 
-    Handle(Geom_BSplineCurve) newCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
+    sggk::BSplineCurve3DPtr newCurve = CloneBSpline(theCurve);
 
     for (const auto& u : params)
     {
-        newCurve->InsertKnot(u, mult, 1e-7); // 插入 knot，允许重复
+        newCurve->InsertKnots(u, mult);
     }
 
     return newCurve;
 }
 
-Handle(Geom_BSplineCurve) CurveFair::InsertKnot(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    Standard_Real u,
-    Standard_Integer mult)
+sggk::BSplineCurve3DPtr CurveFair::InsertKnot(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    double u,
+    int mult)
 {
-    if (theCurve.IsNull() || mult <= 0)
+    if (!theCurve || mult <= 0)
     {
         std::cerr << "Invalid input to InsertSingleKnot." << std::endl;
         return theCurve;
     }
 
-    Handle(Geom_BSplineCurve) newCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
-    newCurve->InsertKnot(u, mult, 1e-7); // 插入节点，默认容差
+    sggk::BSplineCurve3DPtr newCurve = CloneBSpline(theCurve);
+    newCurve->InsertKnots(u, mult);
     return newCurve;
 }
 
-
-//! @brief 在每一对相邻节点区间内插入 nInsert 个均匀分布的新节点
-//! @param [in] theCurve     原始曲线
-//! @param [in] nInsert      每个区间插入的新节点数量
-//! @return 插值后的新曲线
-Handle(Geom_BSplineCurve) CurveFair::InsertUniformKnotsInAllSpans(
-    const Handle(Geom_BSplineCurve)& theCurve,
-    Standard_Integer nInsert)
+sggk::BSplineCurve3DPtr CurveFair::InsertUniformKnotsInAllSpans(
+    const sggk::BSplineCurve3DPtr& theCurve,
+    int nInsert)
 {
-    if (theCurve.IsNull() || nInsert <= 0)
+    if (!theCurve || nInsert <= 0)
     {
         std::cerr << "Invalid input to InsertUniformKnotsInAllSpans." << std::endl;
         return theCurve;
     }
 
-    Handle(Geom_BSplineCurve) newCurve = Handle(Geom_BSplineCurve)::DownCast(theCurve->Copy());
-    TColStd_Array1OfReal knotsArray = newCurve->Knots();
-    Standard_Integer nbKnots = newCurve->NbKnots();
-    Standard_Real upperKnot = knotsArray.Upper();
-    Standard_Real lowerKnot = knotsArray.Lower();
-    std::vector<Standard_Real> newKnots;
-    for (Standard_Integer i = 1; i < nbKnots; ++i)
+    sggk::BSplineCurve3DPtr newCurve = CloneBSpline(theCurve);
+    sggk::RealArray knotsArray = newCurve->Knots();
+    int nbKnots = (int)knotsArray.size();
+    double upperKnot = knotsArray.back();
+    double lowerKnot = knotsArray.front();
+    std::vector<double> newKnots;
+    for (int i = 0; i < nbKnots - 1; ++i)
     {
-        Standard_Real t1 = knotsArray.Value(i);
-        Standard_Real t2 = knotsArray.Value(i + 1);
+        double t1 = knotsArray[i];
+        double t2 = knotsArray[i + 1];
 
-        Standard_Integer inserKnot = nInsert;
+        int inserKnot = nInsert;
         if (t2 - t1 <= (upperKnot - lowerKnot) / 400)
         {
             inserKnot = 0;
@@ -2290,96 +1809,43 @@ Handle(Geom_BSplineCurve) CurveFair::InsertUniformKnotsInAllSpans(
         else if (t2 - t1 <= (upperKnot - lowerKnot) / 100)
         {
             inserKnot = nInsert / 3;
-
         }
         else if (t2 - t1 <= (upperKnot - lowerKnot) / 50)
         {
             inserKnot = nInsert / 2;
         }
-        for (Standard_Integer j = 1; j <= inserKnot; ++j)
+        for (int j = 1; j <= inserKnot; ++j)
         {
-            Standard_Real knot = t1 + j * (t2 - t1) / (inserKnot + 1);
+            double knot = t1 + j * (t2 - t1) / (inserKnot + 1);
             newKnots.push_back(knot);
         }
     }
 
-    // 插入所有新节点
     for (const auto& u : newKnots)
     {
-        newCurve->InsertKnot(u, 1, 1e-7); // multiplicity = 1
+        newCurve->InsertKnots(u, 1);
     }
 
     return newCurve;
 }
 
-
-void CurveFair::SetControlPointWeightMatrix(const Handle(Geom_BSplineCurve)& theCurve, Eigen::MatrixXd& V)
+void CurveFair::SetControlPointWeightMatrix(const sggk::BSplineCurve3DPtr& theCurve, Eigen::MatrixXd& V)
 {
-
-    V.resize(theCurve->NbPoles(), theCurve->NbPoles());
+    int nb = (int)theCurve->ControlPoints().size();
+    V.resize(nb, nb);
     V.setZero();
-    for (Standard_Integer i = 0; i < theCurve->NbPoles(); i++)
+    for (int i = 0; i < nb; i++)
     {
-        // 暂定全为 1
         V(i, i) = 1;
     }
-
-    return; 
-
-    V.resize(theCurve->NbPoles(), theCurve->NbPoles());
-    V.setZero();
-    std::vector<Standard_Real> myKnotSeq = OccArrayConvertoVector(theCurve->KnotSequence());
-    std::vector<Standard_Real> aGrevilleAbscissaeArray(theCurve->NbPoles());
-    for (Standard_Integer i = 0; i < theCurve->NbPoles(); i++)
-    {
-        Standard_Real sum = 0.0;
-        for (Standard_Integer j = 1; j <= theCurve->Degree(); j++)
-        {
-            Standard_Real aKnotValue = myKnotSeq[i + j];
-            //aKnotValue = f_inverse(theCurve, aKnotValue);
-            sum += aKnotValue;
-        }
-        aGrevilleAbscissaeArray[i] = sum / theCurve->Degree();
-    }
-
-    std::vector<Standard_Real> curvatureRates(theCurve->NbPoles());
-    for (Standard_Integer i = 0; i < theCurve->NbPoles(); i++)
-    {
-        Standard_Real s = f_inverse(theCurve, aGrevilleAbscissaeArray[i]);
-        Standard_Real f0 = f(s);
-        Standard_Real f1 = f(s, 1);
-        Standard_Real f2 = f(s, 2);
-        Standard_Real f3 = f(s, 3);
-
-        // Ni
-        Standard_Real aCurvature = BasisFunctionDerivative(f0, i, theCurve->Degree(), 3, myKnotSeq) * pow(f1, 3)
-            + 3 * BasisFunctionDerivative(f0, i, theCurve->Degree(), 2, myKnotSeq) * f1 * f2
-            + BasisFunctionDerivative(f0, i, theCurve->Degree(), 1, myKnotSeq) * f3;
-
-        curvatureRates[i] = aCurvature * aCurvature;
-    }
-
-    Standard_Real aMinRate = *std::min_element(curvatureRates.begin(), curvatureRates.end());
-    Standard_Real aMaxRate = *std::max_element(curvatureRates.begin(), curvatureRates.end());
-
-    for (Standard_Integer i = 0; i < theCurve->NbPoles(); i++)
-    {
-        // 归一化 curvatureRate 到 [0,1]
-        Standard_Real normalized = (curvatureRates[i] - aMinRate) / (aMaxRate - aMinRate + 1e-6);
-        // 映射到 [1.0, 0.1]
-        Standard_Real maxWeight = 1;
-        Standard_Real weight = maxWeight - maxWeight * normalized;
-
-        // 暂定全为 1
-        V(i, i) = 1;
-    }
+    return;
 }
 
-std::vector<gp_Pnt> CurveFair::ReorderPointsNearestNeighbor(const std::vector<gp_Pnt>& points)
+std::vector<sggk::Point3D> CurveFair::ReorderPointsNearestNeighbor(const std::vector<sggk::Point3D>& points)
 {
     if (points.empty()) return {};
 
-    std::vector<gp_Pnt> ordered;
+    std::vector<sggk::Point3D> ordered;
     std::vector<bool> visited(points.size(), false);
     ordered.reserve(points.size());
 
@@ -2389,18 +1855,18 @@ std::vector<gp_Pnt> CurveFair::ReorderPointsNearestNeighbor(const std::vector<gp
 
     for (std::size_t i = 1; i < points.size(); ++i)
     {
-        Standard_Real minDist = std::numeric_limits<Standard_Real>::max();
+        double minDist = std::numeric_limits<double>::max();
         int nextIdx = -1;
 
         for (std::size_t j = 0; j < points.size(); ++j)
         {
             if (!visited[j])
             {
-                Standard_Real d = points[currentIdx].Distance(points[j]);
+                double d = points[currentIdx].DistanceTo(points[j]);
                 if (d < minDist)
                 {
                     minDist = d;
-                    nextIdx = j;
+                    nextIdx = (int)j;
                 }
             }
         }
@@ -2415,25 +1881,24 @@ std::vector<gp_Pnt> CurveFair::ReorderPointsNearestNeighbor(const std::vector<gp
 
     return ordered;
 }
+
 void CurveFair::Perform()
 {
     M = ComputeEnergyMatrix(m_OriginalCurve, m_OriginalCurve->Degree());
-    //C = ComputeContinuityMatrix(theCurve, theCurve->Degree());
     SetControlPointWeightMatrix(m_OriginalCurve, V);
 
-    TColgp_Array1OfPnt Poles = m_OriginalCurve->Poles();
-    Standard_Integer n = m_OriginalCurve->NbPoles();
+    const sggk::Point3DArray& Poles = m_OriginalCurve->ControlPoints();
+    int n = (int)Poles.size();
 
-    Eigen::MatrixXd D0(n, 3); // 原始控制点
-    Eigen::MatrixXd D(n, 3); // 新控制点
-    for (Standard_Integer i = 0; i < n; i++)
+    Eigen::MatrixXd D0(n, 3);
+    Eigen::MatrixXd D(n, 3);
+    for (int i = 0; i < n; i++)
     {
-        D0(i, 0) = Poles.Value(i + 1).X();
-        D0(i, 1) = Poles.Value(i + 1).Y();
-        D0(i, 2) = Poles.Value(i + 1).Z();
+        D0(i, 0) = Poles[i].X();
+        D0(i, 1) = Poles[i].Y();
+        D0(i, 2) = Poles[i].Z();
     }
 
-    // 获取优化曲线
     m_ResultCurve = GetTempFairCurveWithTangentConstraint(m_OriginalCurve, M, V, D0, D, m_Alpha);
 
     Iterator(D0, D);
