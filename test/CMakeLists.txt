@@ -27,6 +27,16 @@ link_directories("${SGK_LIB}")
 
 add_executable(sgk_smoke sgk_smoke.cpp)
 
+add_executable(read_step read_step.cpp)
+target_link_libraries(read_step
+    SGGK_Foundation_ar
+    SGGK_GeomBase_ar
+    SGGK_Geometry_ar
+    SGGK_Topology_ar
+    SGGK_StepExchange_ar
+    SGGK_DataExchangeBase_ar
+)
+
 target_link_libraries(sgk_smoke
     SGGK_Foundation_ar
     SGGK_GeomBase_ar

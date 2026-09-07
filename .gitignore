@@ -29,3 +29,4 @@ run.log
 
 # 冒烟测试构建产物
 test/build-smoke/
+tools/build-tools/

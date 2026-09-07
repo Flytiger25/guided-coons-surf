@@ -29,6 +29,23 @@
 3. STEP 写需要一个**带边界 Loop 的完整 Face**（`TopoBuilder::MakeEdge`×4 → `MakeCoedge` → `MakeLoop` → `FaceAddLoop`）；直接 `MakeFace(msrf)` 无 Loop 会报 "No loop in face"。
 4. 许可证有效（`sggk::init()` 成功，STEP 读写正常，说明 `[DATAEXCHANGE]` 授权可用）。
 
+- commit：`d79dee5`
+
+---
+
+### 第 2 步：数据转换 .brep → .step
+
+- 时间：2026-09-07 11:35
+- 改动文件：新增 `data/input/1_boundary.step`、`1_internal.step`；新增 `tools/brep2step.cpp` + `tools/CMakeLists.txt`（OCC 一次性转换工具）；新增 `test/read_step.cpp`（SGK 读取验证）
+- 验证方式：`brep2step` 把两个 `.brep` 转 `.step`；`read_step` 用 SGK 读回
+- 结果：✅ 成功
+
+**验证数据（SGK 读 .step 结果）：**
+- `1_boundary.step`：4 条边（全部 BSplineCurve3D，degree=3，控制点 14/13/21/17）
+- `1_internal.step`：26 条边（全部 BSplineCurve3D，degree=3，控制点 52~174）
+
+**结论：** SGK 能正确读取 OCC 导出的 `.step`，边数/曲线类型与 `.brep` 一致，`Edge::GeomCurve()->ToBSpline()` 可提取 B 样条曲线（对应 OCC 的 `GeomConvert::CurveToBSplineCurve`）。
+
 - commit：待提交
 
 ---
