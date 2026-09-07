@@ -895,9 +895,18 @@ void GuidedCoonsSurfGenerator::ApproximateBoundaryCurves(std::vector<sggk::BSpli
         if (totalLength > 0)
         {
             for (int i = 1; i <= samplingNum; ++i) {
-                double targetLen = totalLength * (i - 1.0) / (samplingNum - 1.0);
                 sggk::Point3D pnt;
-                curve->CalcParaByLength(targetLen, curve->MinParam(), pnt);
+                // 首末采样点直接用曲线端点，避免 CalcParaByLength 在弧长==总长时反求失败返回 (0,0,0)
+                if (i == 1) {
+                    pnt = curve->CalcStart();
+                }
+                else if (i == samplingNum) {
+                    pnt = curve->CalcEnd();
+                }
+                else {
+                    double targetLen = totalLength * (i - 1.0) / (samplingNum - 1.0);
+                    curve->CalcParaByLength(targetLen, curve->MinParam(), pnt);
+                }
                 samplingParams.push_back((i - 1.0) / (samplingNum - 1.0));
                 samplingPnts.push_back(pnt);
             }

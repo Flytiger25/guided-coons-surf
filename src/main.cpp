@@ -70,20 +70,36 @@ void LoadBSplineCurves(const std::string& filePath, std::vector<sggk::BSplineCur
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
 try {
     sggk::init();
 
+    // 命令行参数：<boundary.step> <guideCurves.step> <output.step>
+    // 未传参时回退到默认路径（保持原有行为）
+    std::string boundaryPath, guidePath, outputPath;
+    if (argc >= 4)
+    {
+        boundaryPath = argv[1];
+        guidePath = argv[2];
+        outputPath = argv[3];
+    }
+    else
+    {
+        boundaryPath = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_boundary.step";
+        guidePath = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_internal.step";
+        outputPath = std::string(GUIDED_COONS_DATA_DIR) + "/output/1_guidedCoonsSurf.step";
+    }
+
     // 获取 guideCurves（内部引导线）
     std::vector<sggk::BSplineCurve3DPtr> guideCurves;
-    std::string fileName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_internal.step";
-    LoadBSplineCurves(fileName, guideCurves);
+    LoadBSplineCurves(guidePath, guideCurves);
 
     // 获取 boundary（边界线）
     std::vector<sggk::BSplineCurve3DPtr> boundary;
-    fileName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_boundary.step";
-    LoadBSplineCurves(fileName, boundary);
+    LoadBSplineCurves(boundaryPath, boundary);
+
+    std::cerr << "[INFO] 读入边界线=" << boundary.size() << " 条, 引导线=" << guideCurves.size() << " 条" << std::endl;
 
     // 生成带引导线的 Coons 曲面
     GuidedCoonsSurfGenerator msg = GuidedCoonsSurfGenerator(boundary, guideCurves);
@@ -91,12 +107,11 @@ try {
     sggk::BSplineSurfacePtr guidedSurf = msg.GuidedSurf();
     if (!msg.IsDone())
     {
-        std::cout << "Case 1 Guided Failing!" << std::endl;
+        std::cout << "Guided Failing!" << std::endl;
     }
 
     // 导出结果
-    fileName = std::string(GUIDED_COONS_DATA_DIR) + "/output/1_guidedCoonsSurf.step";
-    ExportSurfaceToStep(guidedSurf, fileName);
+    ExportSurfaceToStep(guidedSurf, outputPath);
 
     sggk::fini();
     return 0;
