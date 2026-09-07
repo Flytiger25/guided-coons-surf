@@ -15,3 +15,21 @@
 - commit：`5a90f4f`（main 基线）
 
 ---
+
+### 第 1 步：SGK 冒烟测试
+
+- 时间：2026-09-07 11:30
+- 改动文件：新增 `test/sgk_smoke.cpp`、`test/CMakeLists.txt`、`test/build_smoke.bat`；`.gitignore` 加 `test/build-smoke/`
+- 验证方式：编译 + 运行 `sgk_smoke.exe`，逐一验证 init/许可证、B 样条曲线/曲面构造求值、点投影、STEP 写读
+- 结果：✅ 成功（全部 API 通过）
+
+**关键结论（直接影响后续迁移）：**
+1. **编译必须用 `/MD` + Release**（NMake 生成器 + `vcvarsall` 环境，绕开本机崩溃的 MSBuild）。若用 `/MDd`（Debug），`_ITERATOR_DEBUG_LEVEL` 与 SGK 的 Release DLL 不匹配，跨 DLL 传 `std::vector` 会 `vector too long` 异常或段错误。
+2. **点投影用 `BSplineSurface::CalcNearestPnt(pnt, uvParam)`** 返回最近点 + (u,v)，等价 OCC `GeomAPI_ProjectPointOnSurf`。⚠️ `GeomProject::PntSrfProject` **声明了但未实现**（抛"待完善"异常），不可用。
+3. STEP 写需要一个**带边界 Loop 的完整 Face**（`TopoBuilder::MakeEdge`×4 → `MakeCoedge` → `MakeLoop` → `FaceAddLoop`）；直接 `MakeFace(msrf)` 无 Loop 会报 "No loop in face"。
+4. 许可证有效（`sggk::init()` 成功，STEP 读写正常，说明 `[DATAEXCHANGE]` 授权可用）。
+
+- commit：待提交
+
+---
+
