@@ -37,6 +37,19 @@ target_link_libraries(read_step
     SGGK_DataExchangeBase_ar
 )
 
+# KnotUpdate 迁移验证：编译 src/KnotUpdate.cpp + 测试入口
+add_executable(test_knotupdate test_knotupdate.cpp ../src/KnotUpdate.cpp)
+target_include_directories(test_knotupdate PRIVATE ../include)
+target_link_libraries(test_knotupdate
+    SGGK_Foundation_ar
+    SGGK_GeomBase_ar
+    SGGK_Geometry_ar
+)
+add_custom_command(TARGET test_knotupdate POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${SGK_BIN}" "$<TARGET_FILE_DIR:test_knotupdate>"
+    COMMAND ${CMAKE_COMMAND} -E copy "${SGK_ROOT}/sggk.lic" "$<TARGET_FILE_DIR:test_knotupdate>"
+)
+
 target_link_libraries(sgk_smoke
     SGGK_Foundation_ar
     SGGK_GeomBase_ar

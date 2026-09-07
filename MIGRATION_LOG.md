@@ -46,6 +46,18 @@
 
 **结论：** SGK 能正确读取 OCC 导出的 `.step`，边数/曲线类型与 `.brep` 一致，`Edge::GeomCurve()->ToBSpline()` 可提取 B 样条曲线（对应 OCC 的 `GeomConvert::CurveToBSplineCurve`）。
 
+- commit：`4e75c71`
+
+---
+
+### 第 3 步：迁移 KnotUpdate 模块
+
+- 时间：2026-09-07 11:45
+- 改动文件：`include/KnotUpdate.h`、`src/KnotUpdate.cpp`（OCC → SGK 类型替换）
+- 改动要点：`Handle(Geom_BSplineCurve)&` → `const sggk::BSplineCurve3DPtr&`；`bspline->Value(u)` → `bspline->CalcPoint(u)`；`gp_Pnt::Distance` → `Point3D::DistanceTo`；`Standard_Real/Integer/Boolean` → `double/int/bool`；`Precision::Angular()` → `1e-12`
+- 验证方式：新增 `test/test_knotupdate.cpp`，单独编译 `src/KnotUpdate.cpp` + 运行；grep 确认无 OCC include
+- 结果：✅ 成功（运行输出 `newKnot=0.5 maxError=0.00375 sequences=9`，节点插入逻辑正确；无 OCC 残留）
+
 - commit：待提交
 
 ---
