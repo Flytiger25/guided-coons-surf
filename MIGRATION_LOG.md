@@ -114,7 +114,33 @@
 - 验证方式：`build.bat` 整体编译 + 运行 `guided_coons_surf.exe`
 - 结果：✅ 成功（程序运行正常，迭代 0 次收敛，导出 `1_guidedCoonsSurf.step` 89775 字节，文件头 `ISO-10303-21`）
 
-- commit：待提交
+- commit：`09f0681`
+
+---
+
+### 第 7 步：对照验证（OCC 版 vs SGK 版）
+
+- 时间：2026-09-07 14:50
+- 验证方式：`git worktree` 从 main 分支编译 OCC 版（`../guided-coons-surf-occ`），各自运行生成 `.step`，Python 解析对比曲面结构
+- 结果：⚠️ **发现不一致，需进一步修复**
+
+**对照数据：**
+| 指标 | OCC 版 | SGK 版 |
+|---|---|---|
+| 曲面 degree | (3,3) | (3,3) |
+| 曲面控制点 | 14×13 = 182 | 21×32 = 672 |
+| 内部节点重数 | 1 | 2/3 |
+
+**结论：** 两个版本都能编译运行、产出 `.step`，但 SGK 版曲面控制点数量是 OCC 版的 ~3.7 倍，节点重数偏高，说明迁移中引入了**节点插入/升阶的语义差异**。
+
+**可能根源（待修复）：**
+1. `InsertUKnot/InsertVKnot(u, M, tol)`：OCC 的 `M` 是**目标重数**，SGK 的 `InsertUKnots/InsertVKnots(u, times)` 的 `times` 是**插入次数**，直接映射 `M→times` 导致重数偏高。
+2. `IncreaseDegree` → `UDegreeElevation/VDegreeElevation` 的升阶参数语义可能不一致。
+3. 引导线拟合迭代（`ConstructSurfWithGuideCrvs`）中的节点插入同理。
+
+**下一步建议：** 排查并修正上述节点插入/升阶语义差异（重点 `Coons_G0` 与 `ConstructSurfWithGuideCrvs` 两处），再重新对照验证。
+
+- commit：本步为验证记录（参考输出已保留在 `data/output/occ_reference.step`、`sgk_reference.step`）
 
 ---
 
