@@ -4,6 +4,43 @@
 #include <limits>
 #include <cmath>
 
+namespace {
+
+//! 查询 B 样条曲线在指定节点处的重数（节点不存在返回 0）
+unsigned int CurveKnotMultiplicity(const sggk::BSplineCurve3DPtr& crv, double knot, double tol = 1e-7)
+{
+    const sggk::RealArray& K = crv->Knots();
+    const sggk::UIntArray& M = crv->Mults();
+    for (size_t i = 0; i < K.size(); ++i)
+        if (std::fabs(K[i] - knot) <= tol)
+            return M[i];
+    return 0;
+}
+
+//! 查询 B 样条曲面 U 方向在指定节点处的重数（节点不存在返回 0）
+unsigned int SurfaceUKnotMultiplicity(const sggk::BSplineSurfacePtr& surf, double knot, double tol = 1e-7)
+{
+    const sggk::RealArray& K = surf->KnotsU();
+    const sggk::UIntArray& M = surf->MultsU();
+    for (size_t i = 0; i < K.size(); ++i)
+        if (std::fabs(K[i] - knot) <= tol)
+            return M[i];
+    return 0;
+}
+
+//! 查询 B 样条曲面 V 方向在指定节点处的重数（节点不存在返回 0）
+unsigned int SurfaceVKnotMultiplicity(const sggk::BSplineSurfacePtr& surf, double knot, double tol = 1e-7)
+{
+    const sggk::RealArray& K = surf->KnotsV();
+    const sggk::UIntArray& M = surf->MultsV();
+    for (size_t i = 0; i < K.size(); ++i)
+        if (std::fabs(K[i] - knot) <= tol)
+            return M[i];
+    return 0;
+}
+
+} // namespace
+
 GuidedCoonsSurfGenerator::GuidedCoonsSurfGenerator(const std::vector<sggk::BSplineCurve3DPtr>& boundaryCurves, const std::vector<sggk::BSplineCurve3DPtr>& guideCurves, double theTol)
 	: m_boundaryCurves(boundaryCurves), m_guideCurves(guideCurves), m_tol(theTol), m_isDone(false), m_iterateCount(0)
 {
@@ -310,7 +347,11 @@ void GuidedCoonsSurfGenerator::Coons_G0(sggk::BSplineCurve3DPtr& curve1, sggk::B
         mySurface_VRuled->VDegreeElevation(curve2->Degree() - mySurface_VRuled->DegreeV());
 
     for (int i = 0; i < NbVKnot; ++i)
-        mySurface_VRuled->InsertVKnots(VKnots[i], VMults[i]);
+    {
+        unsigned int curMult = SurfaceVKnotMultiplicity(mySurface_VRuled, VKnots[i]);
+        if (VMults[i] > curMult)
+            mySurface_VRuled->InsertVKnots(VKnots[i], VMults[i] - curMult);
+    }
 
     // 
     //2.2 generate the ruled surface in the u direction
@@ -333,7 +374,11 @@ void GuidedCoonsSurfGenerator::Coons_G0(sggk::BSplineCurve3DPtr& curve1, sggk::B
         mySurface_URuled->UDegreeElevation(curve1->Degree() - mySurface_URuled->DegreeU());
 
     for (int i = 0; i < NbUKnot; ++i)
-        mySurface_URuled->InsertUKnots(UKnots[i], UMults[i]);
+    {
+        unsigned int curMult = SurfaceUKnotMultiplicity(mySurface_URuled, UKnots[i]);
+        if (UMults[i] > curMult)
+            mySurface_URuled->InsertUKnots(UKnots[i], UMults[i] - curMult);
+    }
 
     // 
     //2.3 generate the ruled surface of the four corner points
@@ -355,10 +400,18 @@ void GuidedCoonsSurfGenerator::Coons_G0(sggk::BSplineCurve3DPtr& curve1, sggk::B
         mySurface_RuledSurfaceof4CornerPoints->VDegreeElevation(curve2->Degree() - mySurface_RuledSurfaceof4CornerPoints->DegreeV());
 
     for (int i = 0; i < NbVKnot; ++i)
-        mySurface_RuledSurfaceof4CornerPoints->InsertVKnots(VKnots[i], VMults[i]);
+    {
+        unsigned int curMult = SurfaceVKnotMultiplicity(mySurface_RuledSurfaceof4CornerPoints, VKnots[i]);
+        if (VMults[i] > curMult)
+            mySurface_RuledSurfaceof4CornerPoints->InsertVKnots(VKnots[i], VMults[i] - curMult);
+    }
 
     for (int i = 0; i < NbUKnot; ++i)
-        mySurface_RuledSurfaceof4CornerPoints->InsertUKnots(UKnots[i], UMults[i]);
+    {
+        unsigned int curMult = SurfaceUKnotMultiplicity(mySurface_RuledSurfaceof4CornerPoints, UKnots[i]);
+        if (UMults[i] > curMult)
+            mySurface_RuledSurfaceof4CornerPoints->InsertUKnots(UKnots[i], UMults[i] - curMult);
+    }
 
     //2.4 Generate the sum surface mySurface_VRuled + mySurface_URuled - mySurface_RuledSurfaceof4CornerPoints 
     //increase degree
@@ -403,7 +456,10 @@ void GuidedCoonsSurfGenerator::TrimInternalCurves(
         // 遍历所有边界曲线，查找交点
         for (auto& aBoundaryCurve : theBoundaryCurveArray)
         {
-            sggk::IntCrvCrvRet anExtrema = sggk::GeomInt::CrvCrvInt(*aCurrentInternalCurve, *aBoundaryCurve);
+            // 注意：OCC 原版用 GeomAPI_ExtremaCurveCurve（极值）并以 theToleranceDistance 作为交点判据，
+            // SGK 的线线极值未实现，改用 CrvCrvInt（求交）并显式传入相同容差，以容忍拟合带来的微小间隙。
+            sggk::IntCrvCrvRet anExtrema = sggk::GeomInt::CrvCrvInt(*aCurrentInternalCurve, *aBoundaryCurve,
+                sggk::CrvCrvIntOpts(sggk::Toler(theToleranceDistance)));
 
             // 遍历所有交点
             for (const auto& intPnt : anExtrema.IntInfos())
@@ -2965,11 +3021,17 @@ int GuidedCoonsSurfGenerator::SetSameDistribution(sggk::BSplineCurve3DPtr& C1, s
     sggk::UIntArray M2c = C2->Mults();
 
     // 互相插入节点，使两条曲线具有一致的节点向量
+    // 注意：OCC 的 InsertKnots(k, M) 中 M 是目标重数，SGK 的 InsertKnots(t, times) 中 times 是插入次数，
+    // 因此需换算为「目标重数 - 当前重数」后再插入
     for (size_t i = 0; i < K2c.size(); ++i) {
-        C1->InsertKnots(K2c[i], M2c[i]);
+        unsigned int curMult = CurveKnotMultiplicity(C1, K2c[i]);
+        if (M2c[i] > curMult)
+            C1->InsertKnots(K2c[i], M2c[i] - curMult);
     }
     for (size_t i = 0; i < K1c.size(); ++i) {
-        C2->InsertKnots(K1c[i], M1c[i]);
+        unsigned int curMult = CurveKnotMultiplicity(C2, K1c[i]);
+        if (M1c[i] > curMult)
+            C2->InsertKnots(K1c[i], M1c[i] - curMult);
     }
 
     return (int)C1->ControlPoints().size();

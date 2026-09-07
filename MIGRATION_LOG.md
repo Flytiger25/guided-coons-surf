@@ -144,3 +144,39 @@
 
 ---
 
+### 第 8 步：修复语义差异并重新对照验证
+
+- 时间：2026-09-07
+- 改动文件：`src/GuidedCoonsSurfGenerator.cpp`、`src/CurveFair.cpp`、`src/main.cpp`（加异常捕获）
+
+**修复的三处根因：**
+
+1. **节点插入语义**（`Coons_G0` 4 处 + `SetSameDistribution` 2 处）
+   - OCC `InsertUKnot/InsertVKnot(u, M, tol)` 的 `M` 是**目标重数**；SGK `InsertUKnots/InsertVKnots(u, times)` 的 `times` 是**插入次数**。
+   - 直接映射导致重数翻倍（控制点 672 vs 182）。
+   - 修复：新增 `CurveKnotMultiplicity`/`SurfaceUKnotMultiplicity`/`SurfaceVKnotMultiplicity` 查询当前重数，插入次数 = 目标重数 − 当前重数。
+
+2. **弧长积分精度**（`CurveFair::ComputeCurveLength` 及 `ComputeCurveLengthBetweenParameters`）
+   - 原用全局 30 点 Gauss 积分，B 样条导数在节点处间断，精度不足，导致边界曲线拟合多插节点。
+   - 修复：改为**分段 Gauss 积分**（每个节点区间分别积分），对应 OCC `GCPnts_UniformAbscissa` 的分段语义。
+   - 效果：v 方向节点从 12 个对齐到 OCC 的 11 个，控制点 14×13 完全一致。
+
+3. **曲线求交容差**（`TrimInternalCurves`）
+   - OCC 用 `GeomAPI_ExtremaCurveCurve`（极值）+ 容差 10 判交点；SGK 线线极值未实现，迁移误用 `CrvCrvInt`（求交，默认容差 1e-5）。
+   - 结果：26 条引导线全部裁剪失败（交点 0/1 个），采样点为空，引导线修正被跳过。
+   - 修复：`CrvCrvInt` 显式传 `CrvCrvIntOpts(Toler(theToleranceDistance))`（容差 10）。
+   - 效果：每条引导线正确求 2 交点，26 条全部裁剪成功，引导线修正生效（误差 178→1.72）。
+
+**最终对照结果：**
+
+| 指标 | OCC 版 | SGK 版（修复后） |
+|---|---|---|
+| 曲面 degree | (3,3) | (3,3) |
+| 控制点 | 14×13 | 14×13 |
+| u/v 节点 | 12/11 | 12/11 |
+| 最大几何误差 | — | 0.034（相对 0.0002%） |
+
+- 结果：✅ **成功**。SGK 版与 OCC 版曲面几何完全一致（最大误差 0.034，相对 0.0002%）。
+- 验证方式：Python 独立实现标准 Coons 算法验证 SGK 升阶+节点插入正确；B 样条曲面求值对比两版 41×41 网格点云误差。
+- commit：待提交
+

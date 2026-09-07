@@ -69,16 +69,25 @@ static sggk::BSplineCurve3DPtr CloneBSpline(const sggk::BSplineCurve3DPtr& c)
 double CurveFair::ComputeCurveLength(const sggk::BSplineCurve3DPtr& curve, double tol)
 {
     if (!curve) return 0.0;
-    double a = curve->MinParam();
-    double b = curve->MaxParam();
+    const sggk::RealArray& knots = curve->Knots();
     double len = 0.0;
-    for (int i = 0; i < 30; ++i)
+    // 分段 Gauss 积分：在每个节点区间内分别积分，避免节点处导数间断导致的精度损失
+    // （对应 OCC 的 GCPnts_UniformAbscissa 分段自适应积分语义）
+    for (size_t k = 0; k + 1 < knots.size(); ++k)
     {
-        double u = (b - a) * GAUSS_PTS[i] / 2.0 + (a + b) / 2.0;
-        sggk::Vector3D d1 = curve->CalcDeriv1(u);
-        len += GAUSS_WTS[i] * d1.Length();
+        double a = knots[k];
+        double b = knots[k + 1];
+        if (b - a <= 1e-15) continue;
+        double sub = 0.0;
+        for (int i = 0; i < 30; ++i)
+        {
+            double u = (b - a) * GAUSS_PTS[i] / 2.0 + (a + b) / 2.0;
+            sggk::Vector3D d1 = curve->CalcDeriv1(u);
+            sub += GAUSS_WTS[i] * d1.Length();
+        }
+        len += sub * (b - a) / 2.0;
     }
-    return len * (b - a) / 2.0;
+    return len;
 }
 
 void CurveFair::UniformCurve(sggk::BSplineCurve3DPtr& curve)
@@ -568,14 +577,26 @@ std::vector<std::pair<sggk::Point3D, double>> CurveFair::ReCalculateFitPointPara
 double CurveFair::ComputeCurveLengthBetweenParameters(const sggk::BSplineCurve3DPtr& theCurve, double theParameter1, double theParameter2)
 {
     if (!theCurve) return -1.0;
+    if (theParameter1 > theParameter2)
+        std::swap(theParameter1, theParameter2);
+    const sggk::RealArray& knots = theCurve->Knots();
     double len = 0.0;
-    for (int i = 0; i < 30; ++i)
+    // 分段 Gauss 积分，在 [theParameter1, theParameter2] 与各节点区间的交集上分别积分
+    for (size_t k = 0; k + 1 < knots.size(); ++k)
     {
-        double u = (theParameter2 - theParameter1) * GAUSS_PTS[i] / 2.0 + (theParameter1 + theParameter2) / 2.0;
-        sggk::Vector3D d1 = theCurve->CalcDeriv1(u);
-        len += GAUSS_WTS[i] * d1.Length();
+        double a = std::max(knots[k], theParameter1);
+        double b = std::min(knots[k + 1], theParameter2);
+        if (b - a <= 1e-15) continue;
+        double sub = 0.0;
+        for (int i = 0; i < 30; ++i)
+        {
+            double u = (b - a) * GAUSS_PTS[i] / 2.0 + (a + b) / 2.0;
+            sggk::Vector3D d1 = theCurve->CalcDeriv1(u);
+            sub += GAUSS_WTS[i] * d1.Length();
+        }
+        len += sub * (b - a) / 2.0;
     }
-    return len * (theParameter2 - theParameter1) / 2.0;
+    return len;
 }
 
 double CurveFair::ComputeCurveLengthBetweenParameters(const sggk::BSplineCurve3DPtr& theCurve, sggk::Point3D thePnt1, sggk::Point3D thePnt2)
@@ -930,7 +951,6 @@ double CurveFair::ComputeCurveFairEnergy(const sggk::BSplineCurve3DPtr& theCurve
     const int aNumPoles = (int)Poles.size();
 
     Eigen::MatrixXd M = ComputeEnergyMatrix(theCurve, 3);
-    std::cout << M << std::endl;
     Eigen::MatrixXd P(aNumPoles, 3);
     for (int i = 0; i < aNumPoles; ++i)
     {
@@ -1608,7 +1628,6 @@ sggk::BSplineCurve3DPtr CurveFair::RefineByTangentAngle(
         sggk::Vector3D leftVec = Dt(refinedCurve, knots[i] - 1e-6, 3);
         sggk::Vector3D rightVec = Dt(refinedCurve, knots[i] + 1e-6, 3);
         angles[i] = leftVec.CalcAngle(rightVec) * 180.0 / M_PI_VAL;
-        std::cout << angles[i] << std::endl;
     }
 
     double avgAngle = 0.0;

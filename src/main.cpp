@@ -72,6 +72,7 @@ void LoadBSplineCurves(const std::string& filePath, std::vector<sggk::BSplineCur
 
 int main()
 {
+try {
     sggk::init();
 
     // 获取 guideCurves（内部引导线）
@@ -99,4 +100,11 @@ int main()
 
     sggk::fini();
     return 0;
+} catch (const std::exception& e) {
+    std::cerr << "[EXCEPTION] " << e.what() << std::endl;
+    return 1;
+} catch (...) {
+    std::cerr << "[UNKNOWN EXCEPTION]" << std::endl;
+    return 2;
+}
 }
