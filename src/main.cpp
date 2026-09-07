@@ -1,127 +1,102 @@
 #include <iostream>
-#include <TopoDS.hxx>
-#include <gp_Pnt.hxx>
-#include <gp_Vec.hxx>
-#include <gp_Trsf.hxx>
-#include <Geom_Line.hxx>
-#include <Geom_TrimmedCurve.hxx>
-#include <BRepPrimAPI_MakeBox.hxx>
-#include <BRepBuilderAPI_Transform.hxx>
-#include <TopoDS_Shape.hxx>
-#include <BRepTools.hxx>
-#include <TopExp_Explorer.hxx>
-#include <STEPControl_Reader.hxx>
-#include <STEPControl_Writer.hxx>
-#include <Standard_Type.hxx>
-#include <IFSelect_ReturnStatus.hxx>
+#include <Foundation/init.h>
+#include <Geometry/3D/Curve/BSplineCurve3D.h>
+#include <Geometry/3D/Surface/BSplineSurface.h>
+#include <StepExchange/IStepReader.h>
+#include <StepExchange/IStepWriter.h>
+#include <Topology/Tools/TopoBuilder.h>
+#include <Topology/Brep/Body.h>
+#include <Topology/Brep/Edge.h>
 
 #include <Eigen/Core>
 #include <Eigen/Dense>
 
 #include "GuidedCoonsSurfGenerator.h"
 
-void Export_step_OCC(TopoDS_Shape shape, std::string filePath)
+// 把曲面（带 4 条等参边界线 Loop）导出为 .step
+void ExportSurfaceToStep(sggk::BSplineSurfacePtr surf, const std::string& filePath)
 {
-	STEPControl_Writer stepWriter;
-	stepWriter.Transfer(shape, STEPControl_AsIs);
-	IFSelect_ReturnStatus status = stepWriter.Write(filePath.c_str());
+    if (!surf) return;
+
+    auto msrf = sggk::TopoBuilder::MakeModelSurface(surf);
+    auto face = sggk::TopoBuilder::MakeFace(msrf, true);
+
+    // 4 条等参边界线
+    sggk::Curve3DPtr c0 = surf->CalcUCurve(surf->MinParamV());  // v=min, u: min->max
+    sggk::Curve3DPtr c1 = surf->CalcVCurve(surf->MaxParamU());  // u=max, v: min->max
+    sggk::Curve3DPtr c2 = surf->CalcUCurve(surf->MaxParamV());  // v=max, u: min->max（需反向）
+    sggk::Curve3DPtr c3 = surf->CalcVCurve(surf->MinParamU());  // u=min, v: min->max（需反向）
+    c2->Reverse();
+    c3->Reverse();
+
+    sggk::EdgePtr e0 = sggk::TopoBuilder::MakeEdge(sggk::TopoBuilder::MakeModelCurve(c0), true);
+    sggk::EdgePtr e1 = sggk::TopoBuilder::MakeEdge(sggk::TopoBuilder::MakeModelCurve(c1), true);
+    sggk::EdgePtr e2 = sggk::TopoBuilder::MakeEdge(sggk::TopoBuilder::MakeModelCurve(c2), true);
+    sggk::EdgePtr e3 = sggk::TopoBuilder::MakeEdge(sggk::TopoBuilder::MakeModelCurve(c3), true);
+
+    sggk::CoedgeList coedges;
+    coedges.push_back(sggk::TopoBuilder::MakeCoedge(e0, true));
+    coedges.push_back(sggk::TopoBuilder::MakeCoedge(e1, true));
+    coedges.push_back(sggk::TopoBuilder::MakeCoedge(e2, true));
+    coedges.push_back(sggk::TopoBuilder::MakeCoedge(e3, true));
+    auto loop = sggk::TopoBuilder::MakeLoop(coedges);
+
+    sggk::TopoBuilder::FaceAddLoop(face, loop);
+    auto body = sggk::TopoBuilder::MakeBody(face);
+
+    auto writer = sggk::IStepWriter::Create();
+    writer->WriteToFile(body, filePath.c_str());
+    std::cout << "Exported: " << filePath << std::endl;
 }
 
-void LoadBSplineCurves(const std::string& filePath, std::vector<Handle(Geom_BSplineCurve)>& curveArray)
+// 从 .step 读取所有边并提取为 B 样条曲线
+void LoadBSplineCurves(const std::string& filePath, std::vector<sggk::BSplineCurve3DPtr>& curveArray)
 {
-	// 获取文件后缀
-	std::string extension = filePath.substr(filePath.find_last_of('.') + 1);
-
-	TopoDS_Shape boundary;
-	if (extension == "brep")
-	{
-		// 初始化边界Shape
-		BRep_Builder B1;
-		// 从文件读取BRep数据
-		BRepTools::Read(boundary, filePath.c_str(), B1);
-	}
-	else if (extension == "step" || extension == "stp")
-	{
-		// 创建 STEP 文件读取器
-		STEPControl_Reader reader;
-		IFSelect_ReturnStatus status = reader.ReadFile(filePath.c_str());
-
-		if (status == IFSelect_ReturnStatus::IFSelect_RetDone)
-		{
-			// 传输读取的数据
-			reader.TransferRoots();
-			boundary = reader.OneShape();
-		}
-	}
-
-	// 遍历Shape中的边
-	TopExp_Explorer explorer(boundary, TopAbs_EDGE);
-	for (; explorer.More(); explorer.Next())
-	{
-		TopoDS_Edge edge = TopoDS::Edge(explorer.Current());
-
-		// 获取边的几何表示
-		TopLoc_Location loc;
-		Standard_Real first, last;
-		Handle(Geom_Curve) gcurve = BRep_Tool::Curve(edge, loc, first, last);
-		gcurve = Handle(Geom_Curve)::DownCast(gcurve->Copy());
-
-		// 检查曲线类型
-		if (gcurve->DynamicType() == STANDARD_TYPE(Geom_Line))
-		{
-			// 如果是直线，转换为BSpline
-			Handle(Geom_TrimmedCurve) aTrimmedLine = new Geom_TrimmedCurve(gcurve, first, last);
-			Handle(Geom_BSplineCurve) aGeom_BSplineCurve = GeomConvert::CurveToBSplineCurve(aTrimmedLine);
-			if (!aGeom_BSplineCurve.IsNull() && aGeom_BSplineCurve->IsKind(STANDARD_TYPE(Geom_BSplineCurve)))
-			{
-				curveArray.push_back(aGeom_BSplineCurve);
-			}
-		}
-		else if (gcurve->DynamicType() == STANDARD_TYPE(Geom_BSplineCurve))
-		{
-			// 如果已经是BSpline，直接处理
-			Handle(Geom_BSplineCurve) aGeom_BSplineCurve = Handle(Geom_BSplineCurve)::DownCast(gcurve);
-			if (!aGeom_BSplineCurve.IsNull()) {
-				aGeom_BSplineCurve->Segment(first, last);
-				if (!aGeom_BSplineCurve.IsNull() && aGeom_BSplineCurve->IsKind(STANDARD_TYPE(Geom_BSplineCurve)))
-				{
-					curveArray.push_back(aGeom_BSplineCurve);
-				}
-			}
-		}
-	}
-}
-
-int main() 
-{
-	// 获取guideCurves
-	std::vector<Handle(Geom_BSplineCurve)> guideCurves;
-	std::string brepName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_internal.brep";
-	// brepName += std::to_string(i);
-	// brepName += "_internal.brep";
-    LoadBSplineCurves(brepName, guideCurves);
-
-	// 获取boundary
-	std::vector<Handle(Geom_BSplineCurve)> boundary;
-	brepName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_boundary.brep";
-	// brepName += std::to_string(i);
-	// brepName += "_internal.brep";
-    LoadBSplineCurves(brepName, boundary);
-    
-	// try guide
-	Handle(Geom_BSplineSurface) guidedSurf;
-	GuidedCoonsSurfGenerator msg = GuidedCoonsSurfGenerator(boundary, guideCurves);
-	msg.Perform();
-	guidedSurf = msg.GuidedSurf();
-	if (!msg.IsDone()) 
+    auto reader = sggk::IStepReader::Create();
+    sggk::BodyPtr body = reader->ReadFromFile(filePath.c_str());
+    if (!body)
     {
-		std::cout << "Case 1 " << " Guided Failing!" << std::endl;
-	}
+        std::cerr << "[ERROR] read step failed: " << filePath << std::endl;
+        return;
+    }
 
-    TopoDS_Face guidedFace = BRepBuilderAPI_MakeFace(guidedSurf, Precision::Confusion());
-    brepName = std::string(GUIDED_COONS_DATA_DIR) + "/output/";
-	brepName += "1_guidedCoonsSurf.step";
-	Export_step_OCC(guidedFace, brepName);
+    auto edges = body->QueryEdges();
+    for (auto& edge : edges)
+    {
+        auto crv = edge->GeomCurve();
+        if (!crv) continue;
+        sggk::BSplineCurve3DPtr bs = crv->ToBSpline();
+        if (bs) curveArray.push_back(bs);
+    }
+}
 
+int main()
+{
+    sggk::init();
+
+    // 获取 guideCurves（内部引导线）
+    std::vector<sggk::BSplineCurve3DPtr> guideCurves;
+    std::string fileName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_internal.step";
+    LoadBSplineCurves(fileName, guideCurves);
+
+    // 获取 boundary（边界线）
+    std::vector<sggk::BSplineCurve3DPtr> boundary;
+    fileName = std::string(GUIDED_COONS_DATA_DIR) + "/input/1_boundary.step";
+    LoadBSplineCurves(fileName, boundary);
+
+    // 生成带引导线的 Coons 曲面
+    GuidedCoonsSurfGenerator msg = GuidedCoonsSurfGenerator(boundary, guideCurves);
+    msg.Perform();
+    sggk::BSplineSurfacePtr guidedSurf = msg.GuidedSurf();
+    if (!msg.IsDone())
+    {
+        std::cout << "Case 1 Guided Failing!" << std::endl;
+    }
+
+    // 导出结果
+    fileName = std::string(GUIDED_COONS_DATA_DIR) + "/output/1_guidedCoonsSurf.step";
+    ExportSurfaceToStep(guidedSurf, fileName);
+
+    sggk::fini();
     return 0;
 }

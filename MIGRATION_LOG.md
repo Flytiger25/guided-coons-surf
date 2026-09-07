@@ -98,6 +98,22 @@
 - 简化：调试用的中间 STEP 导出（`coons.step`/`GuidedSurf_N.step`/采样点导出，原 `TopoDS_Face`/`STEPControl_Writer`）已注释掉（最终输出在 main.cpp，第 6 步处理）
 - ⚠️ 注意：编译通过 ≠ 算法语义正确，最终正确性靠第 6 步整体运行 + 第 7 步对照验证兜底
 
+- commit：`5a4261a`
+
+---
+
+### 第 6 步：迁移 main.cpp 并整体集成
+
+- 时间：2026-09-07 14:20
+- 改动文件：`src/main.cpp`（迁移到 SGK）、`CMakeLists.txt`（重写，去 OCC 链 SGK）、新增 `build.bat`
+- 改动要点：
+  - `LoadBSplineCurves` 改 `IStepReader::ReadFromFile` + `Body::QueryEdges` + `Edge::GeomCurve()->ToBSpline()`（读 `.step`）
+  - 输出改 `TopoBuilder`（`MakeModelSurface`→`MakeFace`→`MakeEdge`×4→`MakeLoop`→`FaceAddLoop`→`MakeBody`）+ `IStepWriter::WriteToFile`
+  - 入口加 `sggk::init()`/`sggk::fini()`
+  - `CMakeLists.txt` 去全部 OCC 依赖，链 22 个 SGK 模块，POST_BUILD 复制 DLL+许可证
+- 验证方式：`build.bat` 整体编译 + 运行 `guided_coons_surf.exe`
+- 结果：✅ 成功（程序运行正常，迭代 0 次收敛，导出 `1_guidedCoonsSurf.step` 89775 字节，文件头 `ISO-10303-21`）
+
 - commit：待提交
 
 ---

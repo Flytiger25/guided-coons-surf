@@ -4,32 +4,31 @@ project(GuidedCoonsSurf)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# OpenCASCADE Windows 安装路径 (7.7.0, MSVC 2015+ x64)
-set(OpenCASCADE_DIR "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/cmake")
+# 显式 Release + 动态运行时（必须与 SGK 的 Release DLL 匹配，否则跨 DLL 传 STL 容器会崩溃）
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
 
-# Eigen 为 header-only 库，只需包含头文件目录，无需 find_package
+# 源码含中文注释（/utf-8）；/MD 动态运行时；/EHsc 异常；/bigobj 大文件
+if(MSVC)
+    add_compile_options(/utf-8 /MD /EHsc /bigobj)
+endif()
+
+# Eigen 为 header-only 库
 set(EIGEN_INCLUDE_DIR "C:/Zsq/Develop/eigen-3.4.0")
-
-# 查找OpenCASCADE
-find_package(OpenCASCADE REQUIRED)
-
-# 包含OpenCASCADE头文件目录
-include_directories("C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/inc")
-
 include_directories("${EIGEN_INCLUDE_DIR}")
+
+# SGK 几何内核（替代 OpenCASCADE）
+set(SGK_ROOT "C:/Zsq/Projects/conns-surf/occ_SGK/SGK1.0.24/SGK1.0.24/SGGK/x64-win")
+set(SGK_INCLUDE "${SGK_ROOT}/include")
+set(SGK_LIB "${SGK_ROOT}/lib")
+set(SGK_BIN "${SGK_ROOT}/bin")
+
+include_directories("${SGK_INCLUDE}")
+link_directories("${SGK_LIB}")
 
 # 项目头文件目录
 include_directories("${CMAKE_SOURCE_DIR}/include")
-
-# OpenCASCADE 7.7 自带 3rdparty 库的目录（链接 TKV3d 等模块时会用到）
-# openvr_api.lib 属于 TKV3d，freeimage/tbb/freetype 等用于其他模块
-set(OCC_3RDPARTY_ROOT "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64")
-link_directories(
-    "${OCC_3RDPARTY_ROOT}/openvr-1.14.15-64/lib/win64"
-    "${OCC_3RDPARTY_ROOT}/freetype-2.5.5-vc14-64/lib/win64"
-    "${OCC_3RDPARTY_ROOT}/tbb_2021.5-vc14-64/lib/win64"
-    "${OCC_3RDPARTY_ROOT}/freeimage-3.17.0-vc14-64/lib/win64"
-)
 
 # 创建可执行文件
 add_executable(guided_coons_surf
@@ -39,39 +38,41 @@ add_executable(guided_coons_surf
     src/CurveFair.cpp
 )
 
-# 编译期注入数据目录，源码通过 GUIDED_COONS_DATA_DIR 定位输入/输出文件，
-# 与运行时工作目录无关（Windows / macOS 通用）
+# 编译期注入数据目录
 target_compile_definitions(guided_coons_surf PRIVATE
     GUIDED_COONS_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
 
-# 链接OpenCASCADE库
-target_link_libraries(guided_coons_surf 
-    TKernel 
-    TKMath 
-    TKG2d 
-    TKG3d 
-    TKGeomBase 
-    TKBRep 
-    TKGeomAlgo 
-    TKTopAlgo 
-    TKPrim 
-    TKBO 
-    TKBool 
-    TKHLR 
-    TKFillet 
-    TKOffset 
-    TKFeat 
-    TKMesh 
-    TKXSBase 
-    TKShHealing 
-    TKXCAF 
-    TKLCAF 
-    TKV3d 
-    TKService
-    TKXDESTEP
+# 链接 SGK 库（22 个模块，避免遗漏传递依赖）
+target_link_libraries(guided_coons_surf
+    SGGK_Foundation_ar
+    SGGK_GeomBase_ar
+    SGGK_Geometry_ar
+    SGGK_GeomInt_ar
+    SGGK_GeomProject_ar
+    SGGK_GeomAlgo_ar
+    SGGK_BSplineAlgo_ar
+    SGGK_Topology_ar
+    SGGK_StepExchange_ar
+    SGGK_DataExchangeBase_ar
+    SGGK_IgesExchange_ar
+    SGGK_Boolean_ar
+    SGGK_Offset_ar
+    SGGK_ModelingBase_ar
+    SGGK_ModelingPrim_ar
+    SGGK_Heal_ar
+    SGGK_HLR_ar
+    SGGK_Lofting_ar
+    SGGK_Math_ar
+    SGGK_ModelAnalysis_ar
+    SGGK_DataBase_ar
+    SGGK_DxfReader_ar
 )
 
-# 输出信息
-message(STATUS "OpenCASCADE found: ${OpenCASCADE_FOUND}")
-message(STATUS "OpenCASCADE include dir: ${OpenCASCADE_INCLUDE_DIR}")
-message(STATUS "OpenCASCADE library dir: ${OpenCASCADE_LIBRARY_DIR}")
+# 编译后把 SGK 的 DLL 与许可证复制到 exe 目录（保证运行时能找到）
+add_custom_command(TARGET guided_coons_surf POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${SGK_BIN}" "$<TARGET_FILE_DIR:guided_coons_surf>"
+    COMMAND ${CMAKE_COMMAND} -E copy "${SGK_ROOT}/sggk.lic" "$<TARGET_FILE_DIR:guided_coons_surf>"
+)
+
+message(STATUS "SGK include dir: ${SGK_INCLUDE}")
+message(STATUS "SGK library dir: ${SGK_LIB}")
