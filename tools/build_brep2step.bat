@@ -5,7 +5,9 @@ if errorlevel 1 (
     echo [ERROR] vcvarsall failed
     exit /b 1
 )
-cmake -S "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\tools" -B "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\tools\build-tools" -G "NMake Makefiles"
+set "PROJECT_ROOT=%~dp0"
+cmake -S "%PROJECT_ROOT%." -B "%PROJECT_ROOT%build-tools" -G "NMake Makefiles" ^
+    -DOCC_ROOT="%OCC_ROOT%"
 if errorlevel 1 exit /b 1
-cmake --build "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\tools\build-tools"
+cmake --build "%PROJECT_ROOT%build-tools"
 exit /b %errorlevel%

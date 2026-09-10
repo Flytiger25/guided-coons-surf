@@ -17,13 +17,33 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # SGK 根目录（x64-win 下含 include/lib/bin/sggk.lic）
-set(SGK_ROOT "C:/Zsq/Projects/conns-surf/occ_SGK/SGK1.0.24/SGK1.0.24/SGGK/x64-win")
+# 用法：-DSGK_ROOT=<path> 或设置环境变量 SGK_ROOT
+set(SGK_ROOT "" CACHE PATH "Path to SGK SDK root (contains include/lib/bin)")
+if(NOT SGK_ROOT AND DEFINED ENV{SGK_ROOT})
+    set(SGK_ROOT $ENV{SGK_ROOT})
+endif()
+if(NOT SGK_ROOT)
+    message(FATAL_ERROR
+        "SGK_ROOT not set. Pass -DSGK_ROOT=<path> or set env var SGK_ROOT.\n"
+        "  Example: -DSGK_ROOT=C:/Zsq/Projects/.../SGK1.0.24/.../SGGK/x64-win")
+endif()
 set(SGK_INCLUDE "${SGK_ROOT}/include")
 set(SGK_LIB "${SGK_ROOT}/lib")
 set(SGK_BIN "${SGK_ROOT}/bin")
 
 include_directories("${SGK_INCLUDE}")
 link_directories("${SGK_LIB}")
+
+# Eigen 头文件目录（header-only，test_curvefair / gen_check 用到）
+# 用法：-DEIGEN_INCLUDE_DIR=<path> 或设置环境变量 EIGEN_INCLUDE_DIR
+set(EIGEN_INCLUDE_DIR "" CACHE PATH "Path to Eigen3 include directory")
+if(NOT EIGEN_INCLUDE_DIR AND DEFINED ENV{EIGEN_INCLUDE_DIR})
+    set(EIGEN_INCLUDE_DIR $ENV{EIGEN_INCLUDE_DIR})
+endif()
+if(NOT EIGEN_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "EIGEN_INCLUDE_DIR not set. Pass -DEIGEN_INCLUDE_DIR=<path> or set env var EIGEN_INCLUDE_DIR.")
+endif()
 
 add_executable(sgk_smoke sgk_smoke.cpp)
 
@@ -52,7 +72,7 @@ add_custom_command(TARGET test_knotupdate POST_BUILD
 
 # CurveFair 迁移验证：编译 src/CurveFair.cpp + 测试入口（含 Eigen）
 add_executable(test_curvefair test_curvefair.cpp ../src/CurveFair.cpp)
-target_include_directories(test_curvefair PRIVATE ../include "C:/Zsq/Develop/eigen-3.4.0")
+target_include_directories(test_curvefair PRIVATE ../include "${EIGEN_INCLUDE_DIR}")
 target_link_libraries(test_curvefair
     SGGK_Foundation_ar
     SGGK_GeomBase_ar
@@ -70,7 +90,7 @@ add_library(gen_check OBJECT
     ../src/KnotUpdate.cpp
     ../src/CurveFair.cpp
 )
-target_include_directories(gen_check PRIVATE ../include "C:/Zsq/Develop/eigen-3.4.0")
+target_include_directories(gen_check PRIVATE ../include "${EIGEN_INCLUDE_DIR}")
 target_link_libraries(gen_check
     SGGK_Foundation_ar
     SGGK_GeomBase_ar

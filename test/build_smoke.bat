@@ -5,7 +5,10 @@ if errorlevel 1 (
     echo [ERROR] vcvarsall failed
     exit /b 1
 )
-cmake -S "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\test" -B "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\test\build-smoke" -G "NMake Makefiles"
+set "PROJECT_ROOT=%~dp0"
+cmake -S "%PROJECT_ROOT%." -B "%PROJECT_ROOT%build-smoke" -G "NMake Makefiles" ^
+    -DSGK_ROOT="%SGK_ROOT%" ^
+    -DEIGEN_INCLUDE_DIR="%EIGEN_INCLUDE_DIR%"
 if errorlevel 1 exit /b 1
-cmake --build "C:\Zsq\Projects\conns-surf\occ_SGK\guided-coons-surf\test\build-smoke"
+cmake --build "%PROJECT_ROOT%build-smoke"
 exit /b %errorlevel%

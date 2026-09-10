@@ -14,18 +14,34 @@ if(MSVC)
     add_compile_options(/utf-8 /MD /EHsc /bigobj)
 endif()
 
-# Eigen 为 header-only 库
-set(EIGEN_INCLUDE_DIR "C:/Zsq/Develop/eigen-3.4.0")
-include_directories("${EIGEN_INCLUDE_DIR}")
-
-# SGK 几何内核（替代 OpenCASCADE）
-set(SGK_ROOT "C:/Zsq/Projects/conns-surf/occ_SGK/SGK1.0.24/SGK1.0.24/SGGK/x64-win")
+# SGK 几何内核根目录（含 include/lib/bin/sggk.lic），替代 OpenCASCADE
+# 用法：-DSGK_ROOT=<path> 或设置环境变量 SGK_ROOT
+set(SGK_ROOT "" CACHE PATH "Path to SGK SDK root (contains include/lib/bin)")
+if(NOT SGK_ROOT AND DEFINED ENV{SGK_ROOT})
+    set(SGK_ROOT $ENV{SGK_ROOT})
+endif()
+if(NOT SGK_ROOT)
+    message(FATAL_ERROR
+        "SGK_ROOT not set. Pass -DSGK_ROOT=<path> or set env var SGK_ROOT.\n"
+        "  Example: -DSGK_ROOT=C:/Zsq/Projects/.../SGK1.0.24/.../SGGK/x64-win")
+endif()
 set(SGK_INCLUDE "${SGK_ROOT}/include")
-set(SGK_LIB "${SGK_ROOT}/lib")
-set(SGK_BIN "${SGK_ROOT}/bin")
-
+set(SGK_LIB     "${SGK_ROOT}/lib")
+set(SGK_BIN     "${SGK_ROOT}/bin")
 include_directories("${SGK_INCLUDE}")
 link_directories("${SGK_LIB}")
+
+# Eigen 头文件目录（header-only）
+# 用法：-DEIGEN_INCLUDE_DIR=<path> 或设置环境变量 EIGEN_INCLUDE_DIR
+set(EIGEN_INCLUDE_DIR "" CACHE PATH "Path to Eigen3 include directory")
+if(NOT EIGEN_INCLUDE_DIR AND DEFINED ENV{EIGEN_INCLUDE_DIR})
+    set(EIGEN_INCLUDE_DIR $ENV{EIGEN_INCLUDE_DIR})
+endif()
+if(NOT EIGEN_INCLUDE_DIR)
+    message(FATAL_ERROR
+        "EIGEN_INCLUDE_DIR not set. Pass -DEIGEN_INCLUDE_DIR=<path> or set env var EIGEN_INCLUDE_DIR.")
+endif()
+include_directories("${EIGEN_INCLUDE_DIR}")
 
 # 项目头文件目录
 include_directories("${CMAKE_SOURCE_DIR}/include")

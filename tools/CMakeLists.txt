@@ -8,7 +8,16 @@ if(MSVC)
     add_compile_options(/utf-8 /MD /EHsc)
 endif()
 
-set(OCC_ROOT "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0")
+# OpenCASCADE 根目录（仅 brep2step 转换工具需要，SGK 迁移后为遗留）
+# 用法：-DOCC_ROOT=<path> 或设置环境变量 OCC_ROOT
+set(OCC_ROOT "" CACHE PATH "Path to OpenCASCADE root")
+if(NOT OCC_ROOT AND DEFINED ENV{OCC_ROOT})
+    set(OCC_ROOT $ENV{OCC_ROOT})
+endif()
+if(NOT OCC_ROOT)
+    message(FATAL_ERROR
+        "OCC_ROOT not set. Pass -DOCC_ROOT=<path> or set env var OCC_ROOT.")
+endif()
 include_directories("${OCC_ROOT}/inc")
 link_directories("${OCC_ROOT}/win64/vc14/lib")
 
