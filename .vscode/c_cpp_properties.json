@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "Win64",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/inc",
+                "${env:EIGEN_INCLUDE_DIR}"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64",
+            "compilerPath": "C:/Zsq/Programs/Visual Studio/Visual Studio2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe"
+        }
+    ],
+    "version": 4
+}

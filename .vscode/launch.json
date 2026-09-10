@@ -2,21 +2,21 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "C/C++: clang++ 构建和调试活动文件",
+            "name": "运行 guided_coons_surf",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/guided_coons_surf",
+            "program": "${workspaceFolder}/build/Release/guided_coons_surf.exe",
             "args": [],
-            "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "MIMode": "lldb",
-            "setupCommands": [
+            "preLaunchTask": "build",
+            "environment": [
                 {
-                    "description": "禁止 lldb 调用对象方法来格式化显示",
-                    "text": "settings set target.enable-synthetic-value false",
-                    "ignoreFailures": true
+                    "name": "PATH",
+                    "value": "C:/Zsq/Develop/OpenCASCADE-7.7.0-vc14-64/opencascade-7.7.0/win64/vc14/bin;${env:PATH}"
                 }
-            ]
+            ],
+            "console": "integratedTerminal",
+            "stopAtEntry": false
         }
     ]
 }

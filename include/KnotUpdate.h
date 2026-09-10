@@ -1,16 +1,11 @@
 #pragma once
-#include <TopoDS_Shape.hxx>
-#include <TopoDS_Edge.hxx>
-#include <TopoDS_Face.hxx>
-#include <Geom_BSplineCurve.hxx>
-#include <Geom_BSplineSurface.hxx>
-#include <Geom_TrimmedCurve.hxx>
-#include <GeomAPI_ProjectPointOnSurf.hxx>
-#include <STEPControl_Writer.hxx>
-#include <BRepBuilderAPI_MakeFace.hxx>
-#include <GeomAPI_ExtremaCurveCurve.hxx>
-#include <GeomConvert.hxx>
+#include <Geometry/3D/Curve/BSplineCurve3D.h>
+#include <GeomBase/Point3D.h>
+#include <cmath>
+#include <vector>
 #include <map>
+#include <algorithm>
+#include <limits>
 
 enum KONT_UPDATE_TYPE
 {
@@ -26,41 +21,41 @@ class KnotUpdate
 {
 public:
 
-	Standard_Boolean IsEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	bool IsEqual(double x, double y, double tol = 1e-12)
 	{
 		return std::fabs(x - y) < tol;
 	}
 
-	Standard_Boolean IsGreater(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	bool IsGreater(double x, double y, double tol = 1e-12)
 	{
 		return (x - y) > tol;
 	}
 
-	Standard_Boolean IsLess(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	bool IsLess(double x, double y, double tol = 1e-12)
 	{
 		return (y - x) > tol;
 	}
 
-	Standard_Boolean IsGreaterOrEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	bool IsGreaterOrEqual(double x, double y, double tol = 1e-12)
 	{
 		return (x - y) > -tol;
 	}
 
-	Standard_Boolean IsLessOrEqual(Standard_Real x, Standard_Real y, Standard_Real tol = Precision::Angular())
+	bool IsLessOrEqual(double x, double y, double tol = 1e-12)
 	{
 		return (y - x) > -tol;
 	}
 
-	KnotUpdate(Handle(Geom_BSplineCurve)& Bspline, const std::vector<Standard_Real>& Sequences, const std::vector<gp_Pnt>& Pnts, const std::vector<Standard_Real>& Params);
+	KnotUpdate(const sggk::BSplineCurve3DPtr& Bspline, const std::vector<double>& Sequences, const std::vector<sggk::Point3D>& Pnts, const std::vector<double>& Params);
 
-	Standard_Real SelfSingleUpdate(KONT_UPDATE_TYPE type);
+	double SelfSingleUpdate(KONT_UPDATE_TYPE type);
 
-	Standard_Real getMaxError()
+	double getMaxError()
 	{
 		return maxError;
 	}
 
-	std::vector<Standard_Real> getSequences()
+	std::vector<double> getSequences()
 	{
 		return myCurrentSequences;
 	}
@@ -68,37 +63,36 @@ public:
 	~KnotUpdate() {}
 
 private:
-	Standard_Real adjustKnots();
+	double adjustKnots();
 
-	Standard_Real selfUpdateUniform();
+	double selfUpdateUniform();
 
-	Standard_Real selfUpdateForLspia();
+	double selfUpdateForLspia();
 
-	Standard_Real selfUpdateForMidKnot(Standard_Boolean isSingle = true);
+	double selfUpdateForMidKnot(bool isSingle = true);
 
-	Standard_Real selfUpdateForMidKnot_IntervalError();
+	double selfUpdateForMidKnot_IntervalError();
 private:
 
-	Standard_Real error(Standard_Real u, const gp_Pnt& P);
+	double error(double u, const sggk::Point3D& P);
 
 	void updateKnotsAndMutis();
 
 	void updateSequences();
 
-	void updateSequences(Standard_Real newKnot);
+	void updateSequences(double newKnot);
 
-	Standard_Integer checkNewKnot(Standard_Real knot);
+	int checkNewKnot(double knot);
 
 private:
-	Handle(Geom_BSplineCurve)& bspline;
+	const sggk::BSplineCurve3DPtr& bspline;
 
-	std::vector<Standard_Real> myCurrentSequences;
-	std::vector<gp_Pnt> myPnts;
-	std::vector<Standard_Real> myParams;
+	std::vector<double> myCurrentSequences;
+	std::vector<sggk::Point3D> myPnts;
+	std::vector<double> myParams;
 
-	std::vector<Standard_Real> myCurrentKnots;
-	std::vector<Standard_Integer> myCurrentMutis;
+	std::vector<double> myCurrentKnots;
+	std::vector<int> myCurrentMutis;
 
-	Standard_Real maxError;
+	double maxError;
 };
-

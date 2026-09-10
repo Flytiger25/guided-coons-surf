@@ -1,13 +1,13 @@
 ﻿#include "KnotUpdate.h"
 
-KnotUpdate::KnotUpdate(Handle(Geom_BSplineCurve)& Bspline, const std::vector<Standard_Real>& Sequences, const std::vector<gp_Pnt>& Pnts, const std::vector<Standard_Real>& Params)
+KnotUpdate::KnotUpdate(const sggk::BSplineCurve3DPtr& Bspline, const std::vector<double>& Sequences, const std::vector<sggk::Point3D>& Pnts, const std::vector<double>& Params)
 	:myParams(Params), myPnts(Pnts), bspline(Bspline), maxError(10000)
 {
-	std::for_each(Sequences.begin(), Sequences.end(), [&](Standard_Real REALT) {myCurrentSequences.push_back(REALT); });
+	std::for_each(Sequences.begin(), Sequences.end(), [&](double REALT) {myCurrentSequences.push_back(REALT); });
 	updateKnotsAndMutis();
 }
 
-Standard_Real KnotUpdate::SelfSingleUpdate(KONT_UPDATE_TYPE type)
+double KnotUpdate::SelfSingleUpdate(KONT_UPDATE_TYPE type)
 {
 	switch (type)
 	{
@@ -42,13 +42,13 @@ Standard_Real KnotUpdate::SelfSingleUpdate(KONT_UPDATE_TYPE type)
 	return 0.0;
 }
 
-Standard_Real KnotUpdate::adjustKnots() {
+double KnotUpdate::adjustKnots() {
 	// Step 1: Compute differences and find param_max
-	Standard_Real max_dist = -1.0;
-	Standard_Real param_max = 0.0;
+	double max_dist = -1.0;
+	double param_max = 0.0;
 	for (size_t i = 0; i < myParams.size(); ++i) {
-		gp_Pnt p_curve = bspline->Value(myParams[i]);
-		Standard_Real dist = p_curve.Distance(myPnts[i]);
+		sggk::Point3D p_curve = bspline->CalcPoint(myParams[i]);
+		double dist = p_curve.DistanceTo(myPnts[i]);
 
 		if (dist > max_dist) {
 			max_dist = dist;
@@ -93,11 +93,11 @@ Standard_Real KnotUpdate::adjustKnots() {
 
 	// Step 3: Adjust the knots towards param_max
 	if (index_lower != std::numeric_limits<size_t>::max()) {
-		Standard_Real knot = myCurrentKnots[index_lower];
+		double knot = myCurrentKnots[index_lower];
 		myCurrentKnots[index_lower] = knot + 0.5 * (param_max - knot);
 	}
 	if (index_upper != std::numeric_limits<size_t>::max()) {
-		Standard_Real knot = myCurrentKnots[index_upper];
+		double knot = myCurrentKnots[index_upper];
 		myCurrentKnots[index_upper] = knot + 0.5 * (param_max - knot);
 	}
 	updateSequences();
@@ -105,19 +105,19 @@ Standard_Real KnotUpdate::adjustKnots() {
 	return 0.0;
 }
 
-Standard_Real KnotUpdate::selfUpdateUniform() {
+double KnotUpdate::selfUpdateUniform() {
 
 	return 0.0;
 }
 
-Standard_Real KnotUpdate::selfUpdateForLspia()
+double KnotUpdate::selfUpdateForLspia()
 {
-	Standard_Real maxSingleParamError = 0, maxIntervalError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0;
+	double maxSingleParamError = 0, maxIntervalError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0;
 	maxSingleParamError = maxIntervalError = error(myParams[0], myPnts[0]);
-	Standard_Integer maxParamIntervalLeftIndex = 0;
-	Standard_Integer maxParamIntervalRightIndex = 0;
-	Standard_Integer knotIndex;
-	Standard_Integer paramIndex = 0;
+	int maxParamIntervalLeftIndex = 0;
+	int maxParamIntervalRightIndex = 0;
+	int knotIndex;
+	int paramIndex = 0;
 	//开始遍历节点和参数点，要求传入参数点一定包含于节点。只遍历到最后一个下标的前一个
 	for (knotIndex = 0; knotIndex < myCurrentKnots.size() - 1; knotIndex++)
 	{
@@ -125,8 +125,8 @@ Standard_Real KnotUpdate::selfUpdateForLspia()
 		leftKnot = myCurrentKnots[knotIndex];
 		rightKnot = myCurrentKnots[knotIndex + 1];
 		//获取位于当前节点区间内的参数点，并且同步更新最大单点误差，和最大区间误差
-		Standard_Real intervalError = 0; //记录当前节点区间误差
-		Standard_Integer count = 0;//记录当前区间多少个参数
+		double intervalError = 0; //记录当前节点区间误差
+		int count = 0;//记录当前区间多少个参数
 		while (paramIndex < myParams.size())//确保当前参数下标有效
 		{
 			if (IsGreater(myParams[paramIndex], rightKnot))//当前参数超过当前区间右端点
@@ -134,7 +134,7 @@ Standard_Real KnotUpdate::selfUpdateForLspia()
 				break;
 			}
 			//当前参数位于区间内
-			Standard_Real singleError = error(myParams[paramIndex], myPnts[paramIndex]);
+			double singleError = error(myParams[paramIndex], myPnts[paramIndex]);
 			maxSingleParamError = (maxSingleParamError > singleError) ? maxSingleParamError : singleError;
 			intervalError += singleError;
 			paramIndex++;
@@ -151,7 +151,7 @@ Standard_Real KnotUpdate::selfUpdateForLspia()
 	}
 
 	//全部检查完毕，计算新节点
-	for (Standard_Integer i = maxParamIntervalLeftIndex; i <= maxParamIntervalRightIndex; i++)
+	for (int i = maxParamIntervalLeftIndex; i <= maxParamIntervalRightIndex; i++)
 	{
 		newKnot += myParams[i];
 	}
@@ -168,13 +168,13 @@ Standard_Real KnotUpdate::selfUpdateForLspia()
 	return newKnot;
 }
 
-Standard_Real KnotUpdate::selfUpdateForMidKnot(Standard_Boolean isSingle)
+double KnotUpdate::selfUpdateForMidKnot(bool isSingle)
 {
-	Standard_Real maxSingleParamError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0, maxParam = 0;
+	double maxSingleParamError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0, maxParam = 0;
 	newKnot = 0.5;
 	maxSingleParamError = error(myParams[0], myPnts[0]);
-	Standard_Integer knotIndex = 0, maxKnotIndex = 0;
-	Standard_Integer paramIndex = 0;
+	int knotIndex = 0, maxKnotIndex = 0;
+	int paramIndex = 0;
 	//开始遍历节点和参数点，要求传入参数点一定包含于节点。只遍历到最后一个下标的前一个
 	for (knotIndex = 0; knotIndex < myCurrentKnots.size() - 1; knotIndex++)
 	{
@@ -189,7 +189,7 @@ Standard_Real KnotUpdate::selfUpdateForMidKnot(Standard_Boolean isSingle)
 				break;
 			}
 			//当前参数位于区间内
-			Standard_Real singleError = error(myParams[paramIndex], myPnts[paramIndex]);
+			double singleError = error(myParams[paramIndex], myPnts[paramIndex]);
 			if (IsGreater(singleError, maxSingleParamError))
 			{
 				maxSingleParamError = singleError;
@@ -221,12 +221,12 @@ Standard_Real KnotUpdate::selfUpdateForMidKnot(Standard_Boolean isSingle)
 	return newKnot;
 }
 
-Standard_Real KnotUpdate::selfUpdateForMidKnot_IntervalError()
+double KnotUpdate::selfUpdateForMidKnot_IntervalError()
 {
-	Standard_Real maxSingleParamError = 0, maxIntervalError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0;
+	double maxSingleParamError = 0, maxIntervalError = 0, leftKnot = 0, rightKnot = 0, newKnot = 0;
 	maxSingleParamError = maxIntervalError = error(myParams[0], myPnts[0]);
-	Standard_Integer knotIndex = 0, maxKnotIndex = 0;
-	Standard_Integer paramIndex = 0;
+	int knotIndex = 0, maxKnotIndex = 0;
+	int paramIndex = 0;
 	//开始遍历节点和参数点，要求传入参数点一定包含于节点。只遍历到最后一个下标的前一个
 	for (knotIndex = 0; knotIndex < myCurrentKnots.size() - 1; knotIndex++)
 	{
@@ -234,7 +234,7 @@ Standard_Real KnotUpdate::selfUpdateForMidKnot_IntervalError()
 		leftKnot = myCurrentKnots[knotIndex];
 		rightKnot = myCurrentKnots[knotIndex + 1];
 		//获取位于当前节点区间内的参数点，并且同步更新最大单点误差，和最大区间误差
-		Standard_Real intervalError = 0; //记录当前节点区间误差
+		double intervalError = 0; //记录当前节点区间误差
 		while (paramIndex < myParams.size())//确保当前参数下标有效
 		{
 			if (IsGreater(myParams[paramIndex], rightKnot))//当前参数超过当前区间右端点
@@ -242,7 +242,7 @@ Standard_Real KnotUpdate::selfUpdateForMidKnot_IntervalError()
 				break;
 			}
 			//当前参数位于区间内
-			Standard_Real singleError = error(myParams[paramIndex], myPnts[paramIndex]);
+			double singleError = error(myParams[paramIndex], myPnts[paramIndex]);
 			maxSingleParamError = (maxSingleParamError > singleError) ? maxSingleParamError : singleError;
 			intervalError += singleError;
 			paramIndex++;
@@ -271,19 +271,19 @@ Standard_Real KnotUpdate::selfUpdateForMidKnot_IntervalError()
 	return newKnot;
 }
 
-Standard_Real KnotUpdate::error(Standard_Real u, const gp_Pnt& P)
+double KnotUpdate::error(double u, const sggk::Point3D& P)
 {
-	return P.Distance(bspline->Value(u));
+	return P.DistanceTo(bspline->CalcPoint(u));
 }
 
 void KnotUpdate::updateKnotsAndMutis()
 {
 	if (myCurrentSequences.empty()) return;
 
-	std::map<Standard_Real, Standard_Integer> knotMap;
+	std::map<double, int> knotMap;
 
 	// 使用map来统计每个节点的重复次数
-	for (Standard_Real value : this->myCurrentSequences) {
+	for (double value : this->myCurrentSequences) {
 		bool found = false;
 		for (auto& knot : knotMap) {
 			if (IsEqual(value, knot.first)) {
@@ -310,21 +310,21 @@ void KnotUpdate::updateSequences()
 	myCurrentSequences.clear();
 	for (size_t i = 0; i < myCurrentKnots.size(); i++)
 	{
-		for (Standard_Integer j = 0; j < myCurrentMutis[i]; j++)
+		for (int j = 0; j < myCurrentMutis[i]; j++)
 		{
 			myCurrentSequences.push_back(myCurrentKnots[i]);
 		}
 	}
 }
 
-void KnotUpdate::updateSequences(Standard_Real newKnot)
+void KnotUpdate::updateSequences(double newKnot)
 {
 	myCurrentSequences.clear();
 	bool notPush = true;
 	for (size_t i = 0; i < myCurrentKnots.size(); i++)
 	{
 
-		for (Standard_Integer j = 0; j < myCurrentMutis[i]; j++)
+		for (int j = 0; j < myCurrentMutis[i]; j++)
 		{
 			myCurrentSequences.push_back(myCurrentKnots[i]);
 		}
@@ -336,7 +336,7 @@ void KnotUpdate::updateSequences(Standard_Real newKnot)
 	}
 }
 
-Standard_Integer KnotUpdate::checkNewKnot(Standard_Real knot)
+int KnotUpdate::checkNewKnot(double knot)
 {
 	for (size_t i = 0; i < myCurrentKnots.size(); i++)
 	{
