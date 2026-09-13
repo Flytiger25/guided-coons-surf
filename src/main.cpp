@@ -19,7 +19,9 @@
 #include <Eigen/Dense>
 
 #include "GuidedCoonsSurfGenerator.h"
+#ifndef _WIN32
 #include "Viewer.h"
+#endif
 
 void Export_step_OCC(TopoDS_Shape shape, std::string filePath)
 {
@@ -93,39 +95,43 @@ void LoadBSplineCurves(const std::string& filePath, std::vector<Handle(Geom_BSpl
 	}
 }
 
-int main() 
+int main(int argc, char* argv[])
 {
+	// 数据目录：默认相对当前工作目录，可用命令行参数覆盖（如: guided_coons_surf ../data）
+	std::string dataDir = "data";
+	if (argc > 1)
+		dataDir = argv[1];
+
 	// 获取guideCurves
 	std::vector<Handle(Geom_BSplineCurve)> guideCurves;
-	std::string brepName = "/Users/flytiger25/work/occ/data/input/1_internal.brep";
-	// brepName += std::to_string(i);
-	// brepName += "_internal.brep";
+	std::string brepName = dataDir + "/input/1_internal.brep";
     LoadBSplineCurves(brepName, guideCurves);
 
 	// 获取boundary
 	std::vector<Handle(Geom_BSplineCurve)> boundary;
-	brepName = "/Users/flytiger25/work/occ/data/input/1_boundary.brep";
-	// brepName += std::to_string(i);
-	// brepName += "_internal.brep";
+	brepName = dataDir + "/input/1_boundary.brep";
     LoadBSplineCurves(brepName, boundary);
-    
+
 	// try guide
 	Handle(Geom_BSplineSurface) guidedSurf;
 	GuidedCoonsSurfGenerator msg = GuidedCoonsSurfGenerator(boundary, guideCurves);
+	msg.SetCoonsOutDir(dataDir + "/coons"); // 中间结果导出目录
 	msg.Perform();
 	guidedSurf = msg.GuidedSurf();
-	if (!msg.IsDone()) 
+	if (!msg.IsDone())
     {
 		std::cout << "Case 1 " << " Guided Failing!" << std::endl;
 	}
 
     TopoDS_Face guidedFace = BRepBuilderAPI_MakeFace(guidedSurf, Precision::Confusion());
-    brepName = "/Users/flytiger25/work/occ/data/output/";
+    brepName = dataDir + "/output/";
 	brepName += "1_guidedCoonsSurf.step";
 	Export_step_OCC(guidedFace, brepName);
 
-	// 可视化显示生成的曲面
+#ifndef _WIN32
+	// 可视化显示生成的曲面（Windows 暂不提供）
 	DisplayShape(guidedFace, "Guided Coons Surface");
+#endif
 
     return 0;
 }

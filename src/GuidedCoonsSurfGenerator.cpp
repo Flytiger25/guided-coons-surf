@@ -24,12 +24,15 @@ void GuidedCoonsSurfGenerator::Perform()
         return;
     }
 
-    TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
-    std::string filePath = "/Users/flytiger25/work/occ/data/coons/";
-    filePath += "coons.step";
-    STEPControl_Writer stepWriter;
-    stepWriter.Transfer(coonsFace, STEPControl_AsIs);
-    stepWriter.Write(filePath.c_str());
+    // 导出初始 Coons 曲面（中间结果，仅当设置了导出目录时）
+    if (!m_coonsOutDir.empty())
+    {
+        TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
+        std::string filePath = m_coonsOutDir + "/coons.step";
+        STEPControl_Writer stepWriter;
+        stepWriter.Transfer(coonsFace, STEPControl_AsIs);
+        stepWriter.Write(filePath.c_str());
+    }
 
     // 未达到容差要求，继续迭代
     while (!m_isDone && m_iterateCount < MAX_ITERATIONS)
@@ -39,12 +42,15 @@ void GuidedCoonsSurfGenerator::Perform()
         m_originalSurf = m_guidedSurf;
         m_iterateCount++;
 
-        TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
-        std::string filePath = "/Users/flytiger25/work/occ/data/coons/";
-        filePath += "GuidedSurf_" + std::to_string(m_iterateCount) + ".step";
-        STEPControl_Writer stepWriter;
-        stepWriter.Transfer(coonsFace, STEPControl_AsIs);
-        stepWriter.Write(filePath.c_str());
+        // 导出每轮迭代的曲面（中间结果）
+        if (!m_coonsOutDir.empty())
+        {
+            TopoDS_Face coonsFace = BRepBuilderAPI_MakeFace(m_originalSurf, Precision::Confusion());
+            std::string filePath = m_coonsOutDir + "/GuidedSurf_" + std::to_string(m_iterateCount) + ".step";
+            STEPControl_Writer stepWriter;
+            stepWriter.Transfer(coonsFace, STEPControl_AsIs);
+            stepWriter.Write(filePath.c_str());
+        }
     }
 }
 

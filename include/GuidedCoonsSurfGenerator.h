@@ -24,6 +24,7 @@
 
 #include <map>
 #include <chrono>
+#include <string>
 
 #include "KnotUpdate.h"
 #include "CurveFair.h"
@@ -110,6 +111,13 @@ public:
 	inline void SetIsCurveFair(Standard_Boolean isCurveFair)
 	{
 		m_isCurveFair = isCurveFair;
+	}
+
+	//! @brief 设置中间结果（Coons曲面/每轮迭代曲面）STEP 导出目录
+	//! @param [In] coonsOutDir 导出目录，为空字符串则不导出
+	inline void SetCoonsOutDir(const std::string& coonsOutDir)
+	{
+		m_coonsOutDir = coonsOutDir;
 	}
 
 private:
@@ -527,5 +535,6 @@ private:
 	Standard_Integer m_iterateCount; // 迭代次数
 	Standard_Boolean m_isDone; // 迭代完成的标志
 	Standard_Boolean m_isCurveFair = Standard_True; // 光顺能量方式：true=双向等参线光顺，false=格雷维尔坐标Laplace光顺
+	std::string m_coonsOutDir; // 中间结果 STEP 导出目录（空则不导出）
 };
 
